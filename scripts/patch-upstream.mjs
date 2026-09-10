@@ -102,6 +102,62 @@ patch(
   '  mainWindow = createMainWindow()\n  await mainWindow.loadURL(`${SCHEME}://app/index.html`)\n  setupWindow?.destroy()\n',
 )
 
+// Windows ARM64 target: upstream packages win-x64 only, which Windows on ARM runs
+// under x64 emulation (slow enough that the first start looks hung).
+const DESKTOP_SCRIPTS = 'apps/desktop/scripts'
+patch(
+  `${DESKTOP_SCRIPTS}/package-target.ts`,
+  "export type DesktopPackageTargetName = 'mac-arm64' | 'mac-x64' | 'win-x64'\n",
+  "export type DesktopPackageTargetName = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'win-arm64'\n",
+)
+patch(
+  `${DESKTOP_SCRIPTS}/package-target.ts`,
+  "    name: 'win-x64',\n    platform: 'win32',\n    arch: 'x64',\n    builderPlatform: '--win',\n    builderArch: '--x64',\n  },\n}\n",
+  "    name: 'win-x64',\n    platform: 'win32',\n    arch: 'x64',\n    builderPlatform: '--win',\n    builderArch: '--x64',\n  },\n  'win-arm64': {\n    name: 'win-arm64',\n    platform: 'win32',\n    arch: 'arm64',\n    builderPlatform: '--win',\n    builderArch: '--arm64',\n  },\n}\n",
+)
+patch(
+  `${DESKTOP_SCRIPTS}/package-target.ts`,
+  "  if (target.platform === 'win32' && (hostPlatform !== 'win32' || hostArch !== 'x64')) {\n    throw new Error('desktop package: win-x64 requires a Windows x64 build host')\n",
+  "  if (target.platform === 'win32' && (hostPlatform !== 'win32' || hostArch !== target.arch)) {\n    throw new Error(`desktop package: ${name} requires a Windows ${target.arch} build host`)\n",
+)
+for (const file of ['desktop-build-paths.mjs', 'desktop-auto-update-environment.mjs']) {
+  patch(`${DESKTOP_SCRIPTS}/${file}`, "new Set(['mac-arm64', 'mac-x64', 'win-x64'])", "new Set(['mac-arm64', 'mac-x64', 'win-x64', 'win-arm64'])")
+}
+patch(
+  `${DESKTOP_SCRIPTS}/desktop-auto-update-environment.d.mts`,
+  "export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64'",
+  "export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'win-arm64'",
+)
+patch(
+  `${DESKTOP_SCRIPTS}/upload-target.ts`,
+  "new Set<DesktopPackageTargetName>(['mac-arm64', 'mac-x64', 'win-x64'])",
+  "new Set<DesktopPackageTargetName>(['mac-arm64', 'mac-x64', 'win-x64', 'win-arm64'])",
+)
+patch(
+  `${DESKTOP_SCRIPTS}/desktop-upload-plan.ts`,
+  "  'win-x64': { platform: 'win32', arch: 'x64', os: 'win' },\n",
+  "  'win-x64': { platform: 'win32', arch: 'x64', os: 'win' },\n  'win-arm64': { platform: 'win32', arch: 'arm64', os: 'win' },\n",
+)
+function addScripts(relativePath, entries) {
+  const path = join(root, relativePath)
+  const manifest = JSON.parse(readFileSync(path, 'utf8'))
+  const missing = Object.entries(entries).filter(([name]) => manifest.scripts?.[name] === undefined)
+  if (missing.length === 0) {
+    console.log(`already patched: ${relativePath}`)
+    return
+  }
+  for (const [name, command] of missing) manifest.scripts[name] = command
+  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
+  console.log(`patched: ${relativePath}`)
+}
+addScripts('apps/desktop/package.json', {
+  'package:win:arm64': 'tsx scripts/package-target.ts win-arm64',
+  'package:win:arm64:dir': 'tsx scripts/package-target.ts win-arm64 --dir',
+})
+addScripts('package.json', {
+  'package:desktop:win:arm64': 'pnpm --filter @deepseek-ai/dsh-desktop run package:win:arm64',
+})
+
 const ONBOARDING_COPY = {
   en: {
     anchor: "  onboardingSaving: 'Saving…',\n",

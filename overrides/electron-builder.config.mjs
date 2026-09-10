@@ -65,6 +65,9 @@ export function createElectronBuilderConfig(
     },
     win: {
       target: ['nsis'],
+      // win-x64 and win-arm64 would both publish latest.yml to one release; only
+      // win-x64 keeps the update channel, so the arm64 build ships no app-update.yml.
+      ...resolvedArch === 'arm64' ? { publish: null } : {},
     },
     nsis: {
       oneClick: false,

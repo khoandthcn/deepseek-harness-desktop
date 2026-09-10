@@ -14,6 +14,11 @@ on:
         description: How long to observe the first start
         required: true
         default: '420'
+      target:
+        description: Windows build to test
+        type: choice
+        options: [win-x64, win-arm64]
+        default: win-x64
       build_run_id:
         description: Optional Build desktop run id; test its win-x64 artifact instead of the release
         required: false
@@ -24,7 +29,7 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: windows-2025
+    runs-on: ${{ inputs.target == 'win-arm64' && 'windows-11-arm' || 'windows-2025' }}
     timeout-minutes: 45
     steps:
       - name: Download installer
@@ -35,10 +40,10 @@ jobs:
         run: |
           mkdir -p installer
           if [ -n "$BUILD_RUN_ID" ]; then
-            gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern '*win-x64' --dir raw
+            gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.target }}" --dir raw
             find raw -name '*.exe' -exec cp {} installer/ \;
           else
-            gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern '*win-x64.exe' --dir installer
+            gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.target }}.exe" --dir installer
           fi
           ls -la installer
 
@@ -111,5 +116,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-startup-diagnosis
+          name: windows-startup-diagnosis-${{ inputs.target }}
           path: diag

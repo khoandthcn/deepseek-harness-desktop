@@ -51,6 +51,9 @@ jobs:
           - target: win-x64
             script: win:x64
             runner: windows-2025
+          - target: win-arm64
+            script: win:arm64
+            runner: windows-11-arm
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
