@@ -18,8 +18,9 @@ So với upstream, bản build này:
 2. **Hướng dẫn tạo custom model provider ở lần mở đầu**: khi chưa có provider nào dùng được,
    ứng dụng hiện hộp thoại từng bước để tạo provider cho bất kỳ endpoint OpenAI/Anthropic-compatible
    nào (vẫn có lựa chọn nhập DeepSeek API key như cũ).
-3. **Web search qua DuckDuckGo**: preset mặc định `Standard (DuckDuckGo)` bỏ tool `web_search`
-   và dạy model tìm kiếm bằng `https://html.duckduckgo.com/html/?q=…` + `web_fetch`.
+3. **Web search qua Brave Search**: preset mặc định `Standard (Brave Search)` bỏ tool `web_search`
+   và dạy model tìm kiếm bằng `https://search.brave.com/search?q=…` + `web_fetch`
+   (không cần API key; DuckDuckGo đã bị thay vì hay trả captcha cho truy vấn tự động).
 
 ## Tải về
 
@@ -59,13 +60,13 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
 Ứng dụng dùng chung dữ liệu (session, cài đặt, API key) với dsh CLI trong `~/.dsh`
 (`%USERPROFILE%\.dsh` trên Windows).
 
-## Preset web search DuckDuckGo
+## Preset web search Brave Search
 
-Bản desktop đã có sẵn preset `standard-ddg` và dùng nó làm mặc định cho session mới
+Bản desktop đã có sẵn preset `standard-brave` và dùng nó làm mặc định cho session mới
 (đổi lại trong bộ chọn preset khi tạo session, hoặc `agent-presets.default` trong `~/.dsh/settings.yaml`).
 
 Với **dsh CLI** (hoặc bản desktop chính thức), cài preset vào `~/.dsh` bằng file
-`deepseek-harness-ddg-preset.zip` trong Releases (hoặc từ repo này):
+`deepseek-harness-search-preset.zip` trong Releases (hoặc từ repo này):
 
 ```bash
 ./scripts/install-preset.sh              # macOS / Linux
@@ -75,11 +76,12 @@ Với **dsh CLI** (hoặc bản desktop chính thức), cài preset vào `~/.dsh
 powershell -ExecutionPolicy Bypass -File scripts\install-preset.ps1   # Windows
 ```
 
-Script chép preset vào `~/.dsh/.agent-presets/standard-ddg/` và đặt nó làm mặc định trong
+Script chép preset vào `~/.dsh/.agent-presets/standard-brave/` và đặt nó làm mặc định trong
 `~/.dsh/settings.yaml` (thêm `--no-default` / `-NoDefault` để chỉ cài). Session đang chạy giữ preset cũ.
+Nếu trước đó đã cài `standard-ddg`, có thể xoá thư mục `~/.dsh/.agent-presets/standard-ddg/`.
 
 Preset được sinh từ preset `standard` của upstream bằng
-[`scripts/make-ddg-preset.mjs`](scripts/make-ddg-preset.mjs): chính sách tìm kiếm nằm trong
+[`scripts/make-search-preset.mjs`](scripts/make-search-preset.mjs): chính sách tìm kiếm nằm trong
 persona suffix của system prompt, và `tool-web` đặt `search: false`.
 
 ## Build bằng GitHub Actions
@@ -112,8 +114,8 @@ Cần Node.js ≥ 22.19 và `corepack` (đi kèm Node). Kết quả nằm trong
 | Bỏ bước ký lại Mach-O của seed bằng Developer ID khi `DSH_DESKTOP_UNSIGNED=1` | `apps/desktop/scripts/prepare-seed.ts` |
 | Wizard tạo custom provider ở lần mở đầu | `packages/client/ui-settings-models/src/client/DeepSeekOnboardingDialog.tsx` ← [`overrides/ui-settings-models/`](overrides/ui-settings-models) |
 | Chuỗi giao diện của wizard (English + 中文) | `packages/client/ui-settings-models/src/client/locales.ts` |
-| Preset `standard-ddg` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-ddg/` |
-| Preset mặc định của bản desktop = `standard-ddg` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
+| Preset `standard-brave` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-brave/` |
+| Preset mặc định của bản desktop = `standard-brave` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
 
 File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.json`](overrides/manifest.json),
 và mỗi đoạn vá phải khớp đúng một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ ràng
@@ -124,5 +126,7 @@ thay vì tạo ra bản build hỏng.
 - Không ký số → cảnh báo Gatekeeper/SmartScreen ở lần mở đầu; không dùng được cho phân phối đại trà.
 - Giao diện ứng dụng chỉ có tiếng Anh và tiếng Trung (theo upstream).
 - DeepSeek Harness đang ở *developer preview*; mỗi tag upstream có thể thay đổi cách đóng gói.
-- DuckDuckGo có thể chặn truy vấn tự động; khi đó model không lấy được kết quả tìm kiếm.
+- Brave Search là trang HTML công khai, không phải API: nếu dùng quá dày có thể bị chặn tạm thời;
+  khi đó model được dặn báo lại thay vì đoán. Muốn ổn định hơn, dùng provider có API key
+  (Exa, Perplexity) hoặc nạp tiền cho web search của DeepSeek.
 - Không có bản Windows ARM64 và Linux (upstream không hỗ trợ target này cho desktop).

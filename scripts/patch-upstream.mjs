@@ -11,12 +11,12 @@
 // 2. Snippet patches, each matching exactly one upstream snippet:
 //      - skip Developer ID re-signing of the macOS seed store
 //      - onboarding copy (English + Chinese)
-//      - Desktop default agent preset = standard-ddg
-// 3. The DuckDuckGo web-search preset, generated into the shipped preset root.
+//      - Desktop default agent preset = standard-brave
+// 3. The Brave Search web-search preset, generated into the shipped preset root.
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { PRESET_ID, writeDdgPreset } from './make-ddg-preset.mjs'
+import { PRESET_ID, writeSearchPreset } from './make-search-preset.mjs'
 
 const root = resolve(process.argv[2] ?? 'upstream')
 const here = resolve(import.meta.dirname, '..')
@@ -117,8 +117,8 @@ for (const { anchor, entries } of Object.values(ONBOARDING_COPY)) {
   patch('packages/client/ui-settings-models/src/client/locales.ts', anchor, anchor + lines.join(''))
 }
 
-// ── 3. DuckDuckGo preset, shipped and default in Desktop ─────────────────────
-writeDdgPreset(root, join(root, 'packages/preset/agent-presets/presets', PRESET_ID))
+// ── 3. Brave Search preset, shipped and default in Desktop ───────────────────
+writeSearchPreset(root, join(root, 'packages/preset/agent-presets/presets', PRESET_ID))
 console.log(`generated: packages/preset/agent-presets/presets/${PRESET_ID}`)
 
 const overlay = 'apps/desktop-host/config/desktop.cordis.patch.yml'
@@ -126,6 +126,6 @@ const overlayText = readFileSync(join(root, overlay), 'utf8')
 if (overlayText.includes(`default: ${PRESET_ID}`)) {
   console.log(`already patched: ${overlay}`)
 } else {
-  writeFileSync(join(root, overlay), `${overlayText.trimEnd()}\n\n# deepseek-harness-desktop: DuckDuckGo web-search preset for new sessions.\n- id: agent-presets\n  config:\n    default: ${PRESET_ID}\n`)
+  writeFileSync(join(root, overlay), `${overlayText.trimEnd()}\n\n# deepseek-harness-desktop: Brave Search web-search preset for new sessions.\n- id: agent-presets\n  config:\n    default: ${PRESET_ID}\n`)
   console.log(`patched: ${overlay}`)
 }

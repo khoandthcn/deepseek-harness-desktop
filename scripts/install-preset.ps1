@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Install the `standard-ddg` agent preset into the DeepSeek Harness home
+    Install the `standard-brave` agent preset into the DeepSeek Harness home
     (%USERPROFILE%\.dsh) and make it the default for new sessions.
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\install-preset.ps1
@@ -10,7 +10,7 @@
 param([switch]$NoDefault)
 
 $ErrorActionPreference = 'Stop'
-$Preset = 'standard-ddg'
+$Preset = 'standard-brave'
 $Src = Join-Path (Split-Path $PSScriptRoot -Parent) "presets\$Preset"
 $DshHome = if ($env:DSH_HOME -and $env:DSH_HOME.Trim()) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
 $Dest = Join-Path $DshHome ".agent-presets\$Preset"

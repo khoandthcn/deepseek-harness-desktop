@@ -1,3 +1,0 @@
-name: Standard (DuckDuckGo)
-description: Full coding agent; web search goes through DuckDuckGo HTML + web_fetch instead of web_search.
-order: 2

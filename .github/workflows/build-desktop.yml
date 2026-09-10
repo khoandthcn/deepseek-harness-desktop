@@ -2,7 +2,7 @@
 #
 # Checks out deepseek-ai/deepseek-harness at `upstream_ref`, applies
 # scripts/patch-upstream.mjs (unsigned packaging, custom-provider onboarding,
-# DuckDuckGo web-search preset), and runs the official per-target packaging command.
+# Brave Search web-search preset), and runs the official per-target packaging command.
 name: Build desktop
 
 on:
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: echo "version=$(node -p "require('./upstream/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Patch upstream (unsigned build, onboarding, DuckDuckGo preset)
+      - name: Patch upstream (unsigned build, onboarding, Brave Search preset)
         run: node scripts/patch-upstream.mjs upstream
 
       - name: Install
@@ -112,8 +112,8 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Package the DuckDuckGo preset for dsh CLI users
-        run: zip -r dist/deepseek-harness-ddg-preset.zip presets scripts/install-preset.sh scripts/install-preset.ps1
+      - name: Package the Brave Search preset for dsh CLI users
+        run: zip -r dist/deepseek-harness-search-preset.zip presets scripts/install-preset.sh scripts/install-preset.ps1
 
       - name: Publish
         env:

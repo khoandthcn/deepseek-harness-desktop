@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install the `standard-ddg` agent preset into the DeepSeek Harness home and make it
+# Install the `standard-brave` agent preset into the DeepSeek Harness home and make it
 # the default for new sessions. Works for both dsh CLI and DeepSeek Harness Desktop.
 #
 #   ./scripts/install-preset.sh            # install + set default
 #   ./scripts/install-preset.sh --no-default
 set -euo pipefail
 
-PRESET=standard-ddg
+PRESET=standard-brave
 SRC="$(cd "$(dirname "$0")/.." && pwd)/presets/$PRESET"
 DSH_HOME_DIR="${DSH_HOME:-$HOME/.dsh}"
 DEST="$DSH_HOME_DIR/.agent-presets/$PRESET"
