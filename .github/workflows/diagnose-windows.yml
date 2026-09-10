@@ -41,18 +41,27 @@ jobs:
           mkdir -p installer
           if [ -n "$BUILD_RUN_ID" ]; then
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.target }}" --dir raw
-            find raw -name '*.exe' -exec cp {} installer/ \;
+            find raw \( -name '*.exe' -o -name '*-win-*.zip' \) -exec cp {} installer/ \;
           else
-            gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.target }}.exe" --dir installer
+            gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.target }}.exe" --pattern "*${{ inputs.target }}.zip" --dir installer || true
           fi
           ls -la installer
 
       - name: Install silently
         shell: pwsh
         run: |
-          $exe = Get-ChildItem installer\*.exe | Select-Object -First 1
-          $p = Start-Process $exe.FullName -ArgumentList '/S' -Wait -PassThru
-          "installer exit code: $($p.ExitCode)"
+          $zip = Get-ChildItem installer\*.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($zip) {
+            $dest = Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness'
+            Expand-Archive $zip.FullName -DestinationPath $dest -Force
+            "extracted $($zip.Name) to $dest"
+          } else {
+            $exe = Get-ChildItem installer\*.exe | Select-Object -First 1
+            $p = Start-Process $exe.FullName -ArgumentList '/S' -Wait -PassThru
+            "installer exit code: $($p.ExitCode)"
+          }
+          "install dir contents:"
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness') -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table -AutoSize | Out-String
           $reg = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*DeepSeek*' }
           "uninstall entries:"
           $reg | Format-List PSPath, DisplayName, DisplayVersion, InstallLocation, UninstallString | Out-String -Width 400

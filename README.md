@@ -47,6 +47,11 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
 2. SmartScreen có thể hiện *“Windows protected your PC”* → bấm **More info → Run anyway**.
 3. Chọn thư mục cài đặt và hoàn tất. Ứng dụng tự kiểm tra bản mới từ GitHub Releases
    của repo này (menu **Check for Updates…**).
+   **Windows trên ARM** (Surface Pro X/Copilot+ PC, máy ảo Windows 11 ARM trên Mac Apple Silicon):
+   dùng `deepseek-harness-<version>-win-arm64.zip` thay cho file `.exe` — giải nén vào một thư mục
+   (ví dụ `%LOCALAPPDATA%\Programs\DeepSeek Harness`) rồi chạy `DeepSeek Harness.exe`. Bản x64 vẫn chạy
+   được trên ARM nhưng qua giả lập x64 nên lần mở đầu có thể rất lâu; bản ZIP ARM64 chạy native và không
+   tự cập nhật.
 4. **Lần mở đầu mất vài phút**: ứng dụng cài runtime đi kèm (~45.000 file, ~430 MB vào
    `%USERPROFILE%\.dsh`) trước khi mở cửa sổ chính — trên máy CI sạch mất ~2,5 phút, lâu hơn khi
    Windows Defender quét từng file. Cửa sổ nhỏ **Setting up DeepSeek Harness…** hiện trong lúc đó;

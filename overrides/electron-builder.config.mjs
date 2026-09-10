@@ -63,12 +63,18 @@ export function createElectronBuilderConfig(
       sign: false,
       writeUpdateInfo: false,
     },
-    win: {
-      target: ['nsis'],
-      // win-x64 and win-arm64 would both publish latest.yml to one release; only
-      // win-x64 keeps the update channel, so the arm64 build ships no app-update.yml.
-      ...resolvedArch === 'arm64' ? { publish: null } : {},
-    },
+    win: resolvedArch === 'arm64'
+      ? {
+          // An arm64-only NSIS installer extracts its package only when the x86
+          // installer stub reports IsNativeARM64; on Windows 11 ARM that check
+          // failed, so it registered the app without installing any files. Ship a
+          // portable ZIP instead. No update channel: win-x64 owns latest.yml.
+          target: ['zip'],
+          publish: null,
+        }
+      : {
+          target: ['nsis'],
+        },
     nsis: {
       oneClick: false,
       allowToChangeInstallationDirectory: true,
