@@ -97,6 +97,7 @@ jobs:
             upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.exe
             upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.blockmap
             upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.yml
+            !upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/builder-debug.yml
 
   release:
     name: GitHub Release
