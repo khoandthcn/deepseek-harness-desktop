@@ -1,0 +1,123 @@
+# Build unsigned DeepSeek Harness Desktop installers from the official source.
+#
+# Checks out deepseek-ai/deepseek-harness at `upstream_ref`, applies
+# scripts/apply-unsigned.mjs, and runs the official per-target packaging command.
+name: Build desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: deepseek-ai/deepseek-harness tag or branch
+        required: true
+        default: dsh-v0.1.5-rc.1
+      release:
+        description: Publish the installers as a GitHub Release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.upstream_ref }}
+  cancel-in-progress: false
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+  DSH_DESKTOP_UNSIGNED: '1'
+  DSH_DESKTOP_APP_ID: io.github.khoandthcn.deepseekharness
+  DSH_DESKTOP_GITHUB_REPOSITORY: ${{ github.repository }}
+  # The official scripts require an update origin even when publishing elsewhere.
+  DSH_DESKTOP_AUTO_UPDATE_ENV: test
+  DOWNLOAD_TEST_ORIGIN: https://github.com
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            script: mac:arm64
+            runner: macos-15
+          - target: mac-x64
+            script: mac:x64
+            runner: macos-15-intel
+          - target: win-x64
+            script: win:x64
+            runner: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ inputs.upstream_ref }}
+          path: upstream
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: upstream/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./upstream/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Apply unsigned packaging patch
+        run: node scripts/apply-unsigned.mjs upstream
+
+      - name: Install
+        working-directory: upstream
+        run: pnpm install --frozen-lockfile
+
+      - name: Package
+        working-directory: upstream
+        run: pnpm run package:desktop:${{ matrix.script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-harness-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.dmg
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.zip
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.exe
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.blockmap
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/artifacts/*.yml
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          ls -la dist
+          tag="v${VERSION}"
+          notes="Unsigned build of DeepSeek Harness Desktop ${VERSION} from deepseek-ai/deepseek-harness@${{ inputs.upstream_ref }}. See README for first-launch steps on macOS and Windows."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --title "DeepSeek Harness Desktop ${VERSION}" --notes "$notes"
+          fi

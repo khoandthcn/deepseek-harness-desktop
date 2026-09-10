@@ -1,0 +1,3 @@
+.DS_Store
+# Local upstream checkout and build output (scripts/build-local-mac.sh)
+.work/
