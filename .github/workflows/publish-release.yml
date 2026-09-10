@@ -1,0 +1,52 @@
+# Publish the installers of a finished "Build desktop" run to a GitHub Release,
+# entirely inside GitHub (no local download/upload of the ~1 GB of installers).
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Build desktop run id whose artifacts to publish
+        required: true
+      tag:
+        description: Release tag to create or update
+        required: true
+        default: v0.1.5-rc.1
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.build_run_id }}" --repo "$GITHUB_REPOSITORY" --pattern 'deepseek-harness-*' --dir raw
+          mkdir -p dist
+          find raw -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) -exec cp {} dist/ \;
+          zip -r dist/deepseek-harness-search-preset.zip presets scripts/install-preset.sh scripts/install-preset.ps1
+          ls -la dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          notes="Unsigned build of DeepSeek Harness Desktop ${version} (Build desktop run ${{ inputs.build_run_id }}): custom-provider onboarding, Brave Search web-search preset (standard-brave), and a setup window during the first start, which installs ~45k files and takes a few minutes on Windows. See README for first-launch steps."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "DeepSeek Harness Desktop ${version}" --notes "$notes"
+          fi
+          for stale in builder-debug.yml deepseek-harness-ddg-preset.zip; do
+            gh release delete-asset "$TAG" "$stale" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          done
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name)  \(.size)  \(.updatedAt)"'
