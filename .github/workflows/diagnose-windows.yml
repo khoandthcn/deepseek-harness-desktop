@@ -1,0 +1,99 @@
+# Install a released Windows build on a clean runner, launch it, and record what
+# happens during the first start: processes, window, ~/.dsh growth, Electron
+# logs, Application event log, and a screenshot.
+name: Diagnose Windows startup
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose win-x64 installer to test
+        required: true
+        default: v0.1.5-rc.1
+      wait_seconds:
+        description: How long to observe the first start
+        required: true
+        default: '420'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Download installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download ${{ inputs.tag }} --repo ${{ github.repository }} --pattern '*win-x64.exe' --dir installer
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem installer\*.exe | Select-Object -First 1
+          $p = Start-Process $exe.FullName -ArgumentList '/S' -Wait -PassThru
+          "installer exit code: $($p.ExitCode)"
+          $app = Get-ChildItem "$env:LOCALAPPDATA\Programs", $env:ProgramFiles -Recurse -Filter 'DeepSeek Harness.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw 'DeepSeek Harness.exe not found after install' }
+          "installed: $($app.FullName)"
+          Get-ChildItem $app.DirectoryName | Select-Object Name, Length | Format-Table -AutoSize | Out-String
+          Get-AuthenticodeSignature $app.FullName | Format-List Status, StatusMessage | Out-String
+          "APP_EXE=$($app.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Launch and observe first start
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory diag -Force | Out-Null
+          "user=$env:USERNAME profile=$env:USERPROFILE" | Tee-Object diag\timeline.txt
+          "defender: $((Get-MpComputerStatus -ErrorAction SilentlyContinue).RealTimeProtectionEnabled)" | Tee-Object -Append diag\timeline.txt
+          "longpaths: $((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -ErrorAction SilentlyContinue).LongPathsEnabled)" | Tee-Object -Append diag\timeline.txt
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $env:ELECTRON_ENABLE_STACK_DUMPING = '1'
+          $env:DSH_DESKTOP_DIAGNOSTIC_FILE = "$PWD\diag\startup-error.txt"
+          $proc = Start-Process $env:APP_EXE -RedirectStandardOutput diag\stdout.txt -RedirectStandardError diag\stderr.txt -PassThru
+          $deadline = (Get-Date).AddSeconds([int]'${{ inputs.wait_seconds }}')
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 15
+            $t = [int]((Get-Date) - $proc.StartTime).TotalSeconds
+            $procs = Get-Process | Where-Object { $_.Path -like '*DeepSeek Harness*' -or $_.ProcessName -eq 'node' }
+            $window = ($procs | Where-Object { $_.MainWindowTitle }).MainWindowTitle -join ', '
+            $dsh = Join-Path $env:USERPROFILE '.dsh'
+            $files = if (Test-Path $dsh) { Get-ChildItem $dsh -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum } else { $null }
+            $line = "t=${t}s exited=$($proc.HasExited) exit=$(if ($proc.HasExited) { $proc.ExitCode }) procs=$($procs.Count) node=$(@($procs | Where-Object ProcessName -eq 'node').Count) window=[$window] dshFiles=$($files.Count) dshMB=$([int]($files.Sum / 1MB))"
+            $line | Tee-Object -Append diag\timeline.txt
+            if ($proc.HasExited -and -not ($procs)) { break }
+          }
+          Get-Process | Where-Object { $_.Path -like '*DeepSeek Harness*' -or $_.ProcessName -eq 'node' } |
+            Select-Object Id, ProcessName, CPU, WorkingSet64, MainWindowTitle, Path | Format-Table -AutoSize | Out-String -Width 400 | Tee-Object -Append diag\timeline.txt
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*DeepSeek Harness*' -or $_.Name -eq 'node.exe' } |
+            Select-Object ProcessId, ParentProcessId, CommandLine | Format-List | Out-String -Width 1000 | Out-File diag\cmdlines.txt
+
+      - name: Collect state
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory diag -Force | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          try {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("$PWD\diag\screen.png")
+          } catch { "screenshot failed: $_" | Out-File diag\screen-error.txt }
+          $dsh = Join-Path $env:USERPROFILE '.dsh'
+          Get-ChildItem $dsh -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 400 | Out-File diag\dsh-tree.txt
+          foreach ($f in 'desktop\pending.json', 'profiles\desktop\desktop-release.json', 'settings.yaml') {
+            $p = Join-Path $dsh $f
+            if (Test-Path $p) { "=== $f"; Get-Content $p -Raw } else { "=== $f (missing)" }
+          } | Out-File diag\dsh-files.txt
+          Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -match 'Application Error|Windows Error Reporting|Application Hang' } |
+            Format-List TimeCreated, ProviderName, Id, Message | Out-String -Width 400 | Out-File diag\events.txt
+          Get-Process | Where-Object { $_.Path -like '*DeepSeek Harness*' -or $_.ProcessName -eq 'node' } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-startup-diagnosis
+          path: diag
