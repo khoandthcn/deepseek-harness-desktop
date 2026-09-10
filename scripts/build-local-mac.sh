@@ -13,7 +13,7 @@ WORK=.work/upstream
 if [ ! -d "$WORK/.git" ]; then
   git clone --depth 1 --branch "$REF" https://github.com/deepseek-ai/deepseek-harness.git "$WORK"
 fi
-node scripts/apply-unsigned.mjs "$WORK"
+node scripts/patch-upstream.mjs "$WORK"
 
 case "$(uname -m)" in
   arm64) TARGET=mac-arm64 SCRIPT=mac:arm64 ;;

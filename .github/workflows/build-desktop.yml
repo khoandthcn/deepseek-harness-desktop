@@ -1,7 +1,8 @@
 # Build unsigned DeepSeek Harness Desktop installers from the official source.
 #
 # Checks out deepseek-ai/deepseek-harness at `upstream_ref`, applies
-# scripts/apply-unsigned.mjs, and runs the official per-target packaging command.
+# scripts/patch-upstream.mjs (unsigned packaging, custom-provider onboarding,
+# DuckDuckGo web-search preset), and runs the official per-target packaging command.
 name: Build desktop
 
 on:
@@ -75,8 +76,8 @@ jobs:
         shell: bash
         run: echo "version=$(node -p "require('./upstream/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Apply unsigned packaging patch
-        run: node scripts/apply-unsigned.mjs upstream
+      - name: Patch upstream (unsigned build, onboarding, DuckDuckGo preset)
+        run: node scripts/patch-upstream.mjs upstream
 
       - name: Install
         working-directory: upstream
@@ -103,10 +104,15 @@ jobs:
     if: ${{ inputs.release }}
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - name: Package the DuckDuckGo preset for dsh CLI users
+        run: zip -r dist/deepseek-harness-ddg-preset.zip presets scripts/install-preset.sh scripts/install-preset.ps1
 
       - name: Publish
         env:

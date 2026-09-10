@@ -10,8 +10,16 @@
 | macOS Intel | `deepseek-harness-<version>-mac-x64.dmg` | `macos-15-intel` |
 
 Mã nguồn dsh được lấy nguyên từ repo chính thức tại thời điểm build; repo này chỉ chứa
-workflow và một bản vá nhỏ để build **không cần chứng chỉ ký số**. Đây là bản build
-không chính thức, không được DeepSeek xác nhận.
+workflow và các bản vá nhỏ. Đây là bản build không chính thức, không được DeepSeek xác nhận.
+
+So với upstream, bản build này:
+
+1. **Không cần chứng chỉ ký số** (macOS ký ad-hoc, Windows không ký).
+2. **Hướng dẫn tạo custom model provider ở lần mở đầu**: khi chưa có provider nào dùng được,
+   ứng dụng hiện hộp thoại từng bước để tạo provider cho bất kỳ endpoint OpenAI/Anthropic-compatible
+   nào (vẫn có lựa chọn nhập DeepSeek API key như cũ).
+3. **Web search qua DuckDuckGo**: preset mặc định `Standard (DuckDuckGo)` bỏ tool `web_search`
+   và dạy model tìm kiếm bằng `https://html.duckduckgo.com/html/?q=…` + `web_fetch`.
 
 ## Tải về
 
@@ -41,11 +49,38 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
 
 ### Lần chạy đầu
 
-1. **Settings → Models** → dán DeepSeek API key (lấy tại <https://platform.deepseek.com/api_keys>) → Save.
-2. **Choose workspace** → chọn thư mục dự án → bắt đầu một session.
+1. Nếu chưa có model provider, hộp thoại **Set up a model provider** hiện ra:
+   - **Create a custom provider** → điền theo 5 bước: Provider ID, Base URL + API protocol,
+     API key, Models (**Fetch available models** hoặc nhập tay), **Create**.
+   - Hoặc **Use a DeepSeek API key** (lấy tại <https://platform.deepseek.com/api_keys>).
+2. Chọn model vừa tạo trong ô chọn model dưới khung soạn tin.
+3. **Choose workspace** → chọn thư mục dự án → bắt đầu một session.
 
 Ứng dụng dùng chung dữ liệu (session, cài đặt, API key) với dsh CLI trong `~/.dsh`
 (`%USERPROFILE%\.dsh` trên Windows).
+
+## Preset web search DuckDuckGo
+
+Bản desktop đã có sẵn preset `standard-ddg` và dùng nó làm mặc định cho session mới
+(đổi lại trong bộ chọn preset khi tạo session, hoặc `agent-presets.default` trong `~/.dsh/settings.yaml`).
+
+Với **dsh CLI** (hoặc bản desktop chính thức), cài preset vào `~/.dsh` bằng file
+`deepseek-harness-ddg-preset.zip` trong Releases (hoặc từ repo này):
+
+```bash
+./scripts/install-preset.sh              # macOS / Linux
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-preset.ps1   # Windows
+```
+
+Script chép preset vào `~/.dsh/.agent-presets/standard-ddg/` và đặt nó làm mặc định trong
+`~/.dsh/settings.yaml` (thêm `--no-default` / `-NoDefault` để chỉ cài). Session đang chạy giữ preset cũ.
+
+Preset được sinh từ preset `standard` của upstream bằng
+[`scripts/make-ddg-preset.mjs`](scripts/make-ddg-preset.mjs): chính sách tìm kiếm nằm trong
+persona suffix của system prompt, và `tool-web` đặt `search: false`.
 
 ## Build bằng GitHub Actions
 
@@ -56,8 +91,7 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
 - `release`: tick để đăng bộ cài lên GitHub Releases với tag `v<version>`.
 
 Mỗi target chạy lệnh đóng gói chính thức `pnpm run package:desktop:<target>`, nên file cài
-kèm sẵn Node.js, pnpm và toàn bộ dsh (cài offline ở lần mở đầu). Artifact của từng target
-cũng được đính kèm vào lần chạy workflow.
+kèm sẵn Node.js, pnpm và toàn bộ dsh (cài offline ở lần mở đầu).
 
 ## Build bản macOS ngay trên máy
 
@@ -70,20 +104,25 @@ Cần Node.js ≥ 22.19 và `corepack` (đi kèm Node). Kết quả nằm trong
 
 ## Bản vá làm gì
 
-[`scripts/apply-unsigned.mjs`](scripts/apply-unsigned.mjs) sửa checkout upstream trước khi đóng gói:
+[`scripts/patch-upstream.mjs`](scripts/patch-upstream.mjs) sửa checkout upstream trước khi đóng gói:
 
-1. Thay `apps/desktop/electron-builder.config.mjs` bằng
-   [`overrides/electron-builder.config.mjs`](overrides/electron-builder.config.mjs): giữ nguyên
-   file, runtime, seed và cấu hình NSIS; macOS ký ad-hoc, không hardened runtime, không
-   notarize, không kênh cập nhật; Windows không ký Authenticode; publish sang GitHub Releases.
-2. Trong `apps/desktop/scripts/prepare-seed.ts`, bỏ bước ký lại các file Mach-O trong pnpm
-   store bằng Developer ID khi `DSH_DESKTOP_UNSIGNED=1`.
+| Thay đổi | File upstream |
+|----------|---------------|
+| Cấu hình đóng gói không ký, publish sang GitHub Releases, macOS không có kênh cập nhật | `apps/desktop/electron-builder.config.mjs` ← [`overrides/electron-builder.config.mjs`](overrides/electron-builder.config.mjs) |
+| Bỏ bước ký lại Mach-O của seed bằng Developer ID khi `DSH_DESKTOP_UNSIGNED=1` | `apps/desktop/scripts/prepare-seed.ts` |
+| Wizard tạo custom provider ở lần mở đầu | `packages/client/ui-settings-models/src/client/DeepSeekOnboardingDialog.tsx` ← [`overrides/ui-settings-models/`](overrides/ui-settings-models) |
+| Chuỗi giao diện của wizard (English + 中文) | `packages/client/ui-settings-models/src/client/locales.ts` |
+| Preset `standard-ddg` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-ddg/` |
+| Preset mặc định của bản desktop = `standard-ddg` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
 
-Mỗi chỗ sửa khớp chính xác một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ
-ràng thay vì tạo ra bản build hỏng.
+File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.json`](overrides/manifest.json),
+và mỗi đoạn vá phải khớp đúng một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ ràng
+thay vì tạo ra bản build hỏng.
 
 ## Giới hạn
 
 - Không ký số → cảnh báo Gatekeeper/SmartScreen ở lần mở đầu; không dùng được cho phân phối đại trà.
+- Giao diện ứng dụng chỉ có tiếng Anh và tiếng Trung (theo upstream).
 - DeepSeek Harness đang ở *developer preview*; mỗi tag upstream có thể thay đổi cách đóng gói.
+- DuckDuckGo có thể chặn truy vấn tự động; khi đó model không lấy được kết quả tìm kiếm.
 - Không có bản Windows ARM64 và Linux (upstream không hỗ trợ target này cho desktop).

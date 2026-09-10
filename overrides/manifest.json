@@ -1,0 +1,17 @@
+[
+  {
+    "target": "apps/desktop/electron-builder.config.mjs",
+    "source": "overrides/electron-builder.config.mjs",
+    "upstreamSha256": "dafc9f332e269551166bbc2005e11b892502c222e4068f4049ff60950a414f10"
+  },
+  {
+    "target": "packages/client/ui-settings-models/src/client/DeepSeekOnboardingDialog.tsx",
+    "source": "overrides/ui-settings-models/DeepSeekOnboardingDialog.tsx",
+    "upstreamSha256": "4fd702f885b68cca3a55ffdd528b234acd37f9b34e2839cb89433874b5a8841e"
+  },
+  {
+    "target": "packages/client/ui-settings-models/src/client/ProviderOnboarding.module.css",
+    "source": "overrides/ui-settings-models/ProviderOnboarding.module.css",
+    "upstreamSha256": null
+  }
+]
