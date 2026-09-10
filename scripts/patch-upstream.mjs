@@ -70,6 +70,38 @@ patch(
   "    if (targetPlatform === 'darwin' && process.env.DSH_DESKTOP_UNSIGNED !== '1') {\n      macOSSigning = resolveMacOSSigningEnvironment(process.env)",
 )
 
+// First-start progress window: the seed install runs before any window exists.
+const MAIN_TS = 'apps/desktop/src/main.ts'
+patch(
+  MAIN_TS,
+  'async function main(): Promise<void> {\n',
+  readFileSync(join(here, 'overrides', 'desktop', 'setup-window.snippet.ts'), 'utf8') + 'async function main(): Promise<void> {\n',
+)
+patch(
+  MAIN_TS,
+  '  if (development === undefined) {\n    await manager.applyRelease(resources.seed, app.getVersion(), {\n',
+  [
+    '  // deepseek-harness-desktop: show progress while a new release installs.',
+    '  const installsRelease = development === undefined && ((): boolean => {',
+    '    try {',
+    '      return manager.releaseVersion() !== app.getVersion()',
+    '    } catch {',
+    '      // No readable desktop-release.json: the profile has never been installed.',
+    '      return true',
+    '    }',
+    '  })()',
+    '  const setupWindow = installsRelease ? await openSetupWindow(app.getLocale()) : undefined',
+    '  if (development === undefined) {',
+    '    await manager.applyRelease(resources.seed, app.getVersion(), {',
+    '',
+  ].join('\n'),
+)
+patch(
+  MAIN_TS,
+  '  mainWindow = createMainWindow()\n  await mainWindow.loadURL(`${SCHEME}://app/index.html`)\n',
+  '  mainWindow = createMainWindow()\n  await mainWindow.loadURL(`${SCHEME}://app/index.html`)\n  setupWindow?.destroy()\n',
+)
+
 const ONBOARDING_COPY = {
   en: {
     anchor: "  onboardingSaving: 'Saving…',\n",

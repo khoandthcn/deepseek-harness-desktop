@@ -47,6 +47,10 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
 2. SmartScreen có thể hiện *“Windows protected your PC”* → bấm **More info → Run anyway**.
 3. Chọn thư mục cài đặt và hoàn tất. Ứng dụng tự kiểm tra bản mới từ GitHub Releases
    của repo này (menu **Check for Updates…**).
+4. **Lần mở đầu mất vài phút**: ứng dụng cài runtime đi kèm (~45.000 file, ~430 MB vào
+   `%USERPROFILE%\.dsh`) trước khi mở cửa sổ chính — trên máy CI sạch mất ~2,5 phút, lâu hơn khi
+   Windows Defender quét từng file. Cửa sổ nhỏ **Setting up DeepSeek Harness…** hiện trong lúc đó;
+   đừng mở ứng dụng lần nữa (phiên bản thứ hai sẽ tự thoát). Các lần mở sau nhanh như bình thường.
 
 ### Lần chạy đầu
 
