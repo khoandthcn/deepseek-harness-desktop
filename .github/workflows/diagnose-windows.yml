@@ -14,6 +14,10 @@ on:
         description: How long to observe the first start
         required: true
         default: '420'
+      build_run_id:
+        description: Optional Build desktop run id; test its win-x64 artifact instead of the release
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -24,9 +28,19 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Download installer
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download ${{ inputs.tag }} --repo ${{ github.repository }} --pattern '*win-x64.exe' --dir installer
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          mkdir -p installer
+          if [ -n "$BUILD_RUN_ID" ]; then
+            gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern '*win-x64' --dir raw
+            find raw -name '*.exe' -exec cp {} installer/ \;
+          else
+            gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern '*win-x64.exe' --dir installer
+          fi
+          ls -la installer
 
       - name: Install silently
         shell: pwsh
