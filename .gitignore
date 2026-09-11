@@ -1,3 +1,6 @@
 .DS_Store
 # Local upstream checkout and build output (scripts/build-local-mac.sh)
 .work/
+
+# Local SOC HAR captures (contain live session tokens — never commit)
+*.har
