@@ -278,6 +278,22 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
   console.log(`copied: packages/soc/${name}`)
 }
 
+// The Desktop seed is the dependency closure of `@deepseek-ai/dsh` (apps/cli),
+// so a package nothing depends on gets packed but never seeded: the profile
+// would offer the soc-cloud preset and then fail to mount it, because the two
+// plugins it names are not installable. Declare them on the meta package, the
+// way every shipped tool is declared.
+const cliManifestPath = join(root, 'apps', 'cli', 'package.json')
+const cliManifest = JSON.parse(readFileSync(cliManifestPath, 'utf8'))
+for (const name of ['dsh-soc-client', 'dsh-soc-auth', 'dsh-tool-soc-soar']) {
+  cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
+}
+cliManifest.dependencies = Object.fromEntries(
+  Object.entries(cliManifest.dependencies).sort(([left], [right]) => left.localeCompare(right)),
+)
+writeFileSync(cliManifestPath, `${JSON.stringify(cliManifest, null, 2)}\n`)
+console.log('patched: apps/cli/package.json (soc dependencies)')
+
 // The soc packages must be registered like any other workspace package: a `paths`
 // entry so source-plane imports resolve, and a host aggregate reference so
 // `tsc -b` actually emits their lib/.
