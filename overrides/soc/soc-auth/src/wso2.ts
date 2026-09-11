@@ -32,6 +32,12 @@ export interface Wso2LoginOptions {
   scope?: string
   /** Injectable fetch, for tests. Defaults to the global `fetch`. */
   fetchImpl?: FetchLike
+  /**
+   * Called once, on success, with a snapshot of the cookie jar built during the
+   * flow (`commonAuthId`, the WAF `D1N` cookie, ...). Downstream systems such as
+   * SOAR authenticate with these session cookies, so the caller needs a copy.
+   */
+  onCookies?: (cookies: Record<string, string>) => void
 }
 
 export interface Wso2LoginResult {
@@ -85,6 +91,10 @@ class CookieJar {
   header(): string | undefined {
     if (this.jar.size === 0) return undefined
     return [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ')
+  }
+
+  snapshot(): Record<string, string> {
+    return Object.fromEntries(this.jar)
   }
 }
 
@@ -214,5 +224,6 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
     throw new SocAuthError('WSO2 login: the token response contained no access_token.')
   }
   const expiresIn = Number(payload?.expires_in ?? 3600)
+  opts.onCookies?.(jar.snapshot())
   return { accessToken, expiresIn: Number.isFinite(expiresIn) ? expiresIn : 3600 }
 }
