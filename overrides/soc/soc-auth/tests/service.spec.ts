@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SocAuthService } from '../src/service.ts'
 
+/** vitest types `mock.calls` from the stub's own signature; these tests read
+ * positional args the stubs do not declare, so narrow once here. */
+const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
+  m.mock.calls as unknown as any[][]
+
 const IAM = 'https://iam.example'
 const REDIRECT_URI = 'https://app.example/callback'
 const SOAR = 'https://soar.example'
@@ -60,7 +65,7 @@ function stubFetch(soarResponses: Response[], wso2: Response[] = wso2HappyPath()
 }
 
 function soarCalls(f: ReturnType<typeof stubFetch>) {
-  return f.mock.calls.filter((c) => String(c[0]).startsWith(SOAR))
+  return callsOf(f).filter((c) => String(c[0]).startsWith(SOAR))
 }
 
 function makeService(
@@ -73,8 +78,7 @@ function makeService(
     clientId: 'cid',
     redirectUri: REDIRECT_URI,
     soarBaseUrl: SOAR,
-    username: 'alice',
-    password: PASSWORD,
+    credentials: async () => ({ username: 'alice', password: PASSWORD }),
     fetchImpl,
     now,
     ...extra,

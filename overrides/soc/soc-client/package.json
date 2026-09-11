@@ -5,6 +5,7 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
     "typescript": "^5",
     "vitest": "^3"
   },

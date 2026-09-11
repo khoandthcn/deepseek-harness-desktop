@@ -234,7 +234,12 @@ const SOC_PACKAGE_ENTRIES = new Set(['package.json', 'tsconfig.json', 'src', 'te
 // in place. `tsc -b` needs them to build each dependency before its dependents.
 const SOC_PACKAGE_REFERENCES = {
   'soc-client': [],
-  'soc-auth': ['../../../vendor/cosmokit', '../../../vendor/cordis'],
+  'soc-auth': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../credentials/credentials',
+    '../../util/launch-environment',
+  ],
   'tool-soc-soar': [
     '../../../vendor/cosmokit',
     '../../../vendor/cordis',

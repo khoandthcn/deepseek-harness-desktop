@@ -36,8 +36,12 @@ export interface SocAuthServiceOptions {
   tenant?: string | undefined
   /** SOAR OAuth client id used by the access exchange. */
   soarClientId?: string | undefined
-  username: string
-  password: string
+  /**
+   * Supplies the login credentials when a login actually runs. A callback,
+   * not two strings: the credentials seam is asynchronous, and the secret
+   * should not be held in memory for the life of the session.
+   */
+  credentials: () => Promise<{ username: string, password: string }>
   /** Injectable fetch, for tests. Defaults to the global `fetch`. */
   fetchImpl?: FetchLike | undefined
   /** Injectable clock in epoch milliseconds, for expiry tests. */
@@ -51,8 +55,7 @@ export class SocAuthService {
   private readonly soarBaseUrl: string
   private readonly tenant: string
   private readonly soarClientId: string
-  private readonly username: string
-  private readonly password: string
+  private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
 
@@ -73,8 +76,7 @@ export class SocAuthService {
     this.soarBaseUrl = opts.soarBaseUrl.replace(/\/+$/, '')
     this.tenant = opts.tenant ?? 'MASTER'
     this.soarClientId = opts.soarClientId ?? 'SOAR_CLIENT'
-    this.username = opts.username
-    this.password = opts.password
+    this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
     this.now = opts.now ?? (() => Date.now())
   }
@@ -91,12 +93,13 @@ export class SocAuthService {
   async login(otp: string): Promise<void> {
     this.invalidate()
     let cookies: Record<string, string> = {}
+    const { username, password } = await this.credentials()
     const result = await runWso2Login({
       iamUrl: this.iamUrl,
       clientId: this.clientId,
       redirectUri: this.redirectUri,
-      username: this.username,
-      password: this.password,
+      username,
+      password,
       otp,
       fetchImpl: this.fetchImpl,
       onCookies: (jar) => {

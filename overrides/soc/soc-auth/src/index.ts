@@ -2,11 +2,17 @@
  * `soc-auth` — a thin Cordis plugin that exposes a {@link SocAuthService}
  * instance as `ctx.socAuth`.
  *
- * All cordis imports are **type-only**, so nothing from `@deepseek-ai/*` is
- * required at runtime and `service.ts` stays unit-testable on its own.
+ * Credentials are read *lazily*, at login time rather than at mount time: the
+ * credentials seam is asynchronous, and a plugin that reads a secret just to sit
+ * idle has held it for no reason. `ctx.get('credentials')` is how a plugin may
+ * consult an optional service — reading `ctx.credentials` directly throws unless
+ * the service is declared in `inject`, which would make the whole plugin wait
+ * for a store that need not exist.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { SocAuthService } from './service.ts'
 
 export * from './wso2.ts'
@@ -16,8 +22,8 @@ export const name = 'soc-auth'
 
 /**
  * Nothing is strictly required: credentials come from `ctx.credentials` when
- * that service is present and from the environment otherwise, so the plugin must
- * be able to load without it.
+ * that service is present and from the launch environment otherwise, so the
+ * plugin must be able to load without it.
  */
 export const inject: string[] = []
 
@@ -47,24 +53,23 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** Minimal shape we rely on when the optional `credentials` service exists. */
-interface CredentialsLike {
-  get?: (ref: string) => string | undefined
-}
-
-/** `process` is typed locally so the package needs no `@types/node` dependency. */
-declare const process: { env: Record<string, string | undefined> } | undefined
-
 /**
- * Resolve a credential by reference: `ctx.credentials.get(ref)` when the
- * credentials service is installed, otherwise `process.env[ref]`. The value is
- * only ever handed to {@link SocAuthService}; it is never logged, never stored in
+ * Resolve one credential by reference: the credentials store when it is
+ * mounted, otherwise the environment this run was launched with. The value goes
+ * straight to {@link SocAuthService}; it is never logged, never written to
  * settings, and never shown to the model.
+ *
+ * @param ctx - the plugin context.
+ * @param ref - the environment-variable-shaped reference to read.
+ * @returns the secret.
+ * @throws when neither layer holds a value.
  */
-export function resolveCredential(ctx: Context, ref: string): string {
-  const credentials = (ctx as unknown as { credentials?: CredentialsLike }).credentials
-  const fromService = typeof credentials?.get === 'function' ? credentials.get(ref) : undefined
-  const value = fromService ?? (typeof process !== 'undefined' ? process?.env?.[ref] : undefined)
+export async function resolveCredential(ctx: Context, ref: string): Promise<string> {
+  const key = credentialRef(ref)
+  const credentials = ctx.get('credentials')
+  const value = credentials !== undefined
+    ? (await credentials.resolve(key))?.value ?? launchEnvironmentOf(ctx).get(key)?.value
+    : launchEnvironmentOf(ctx).get(key)?.value
   if (!value) {
     throw new Error(
       `soc-auth: credential "${ref}" is not set — add it to the credentials store or export it in the environment.`,
@@ -84,8 +89,10 @@ export function apply(ctx: Context, config: Config): void {
     soarBaseUrl: config.soarBaseUrl,
     tenant: config.tenant,
     soarClientId: config.soarClientId,
-    username: resolveCredential(ctx, usernameRef),
-    password: resolveCredential(ctx, passwordRef),
+    credentials: async () => ({
+      username: await resolveCredential(ctx, usernameRef),
+      password: await resolveCredential(ctx, passwordRef),
+    }),
   })
 
   ctx.provide('socAuth', service)

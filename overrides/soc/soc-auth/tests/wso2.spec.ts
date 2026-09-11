@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { parseSessionDataKey, runWso2Login } from '../src/wso2.ts'
 
+/** vitest types `mock.calls` from the stub's own signature; these tests read
+ * positional args the stubs do not declare, so narrow once here. */
+const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
+  m.mock.calls as unknown as any[][]
+
 const IAM = 'https://iam.example'
 const REDIRECT_URI = 'https://app.example/callback'
 
@@ -80,16 +85,16 @@ describe('runWso2Login', () => {
     expect(f).toHaveBeenCalledTimes(5)
 
     // Step 1: authorize
-    const authorize = new URL(String(f.mock.calls[0][0]))
+    const authorize = new URL(String(callsOf(f)[0]![0]))
     expect(authorize.pathname).toBe('/oauth2/authorize')
     expect(authorize.searchParams.get('response_type')).toBe('code')
     expect(authorize.searchParams.get('client_id')).toBe('cid')
     expect(authorize.searchParams.get('redirect_uri')).toBe(REDIRECT_URI)
     expect(authorize.searchParams.get('scope')).toBe('openid')
-    expect((f.mock.calls[0][1] as any).redirect).toBe('manual')
+    expect((callsOf(f)[0]![1] as any).redirect).toBe('manual')
 
     // Step 2: password POST
-    const pwCall = f.mock.calls[1] as any
+    const pwCall = callsOf(f)[1] as any
     expect(String(pwCall[0])).toBe(`${IAM}/commonauth`)
     expect(pwCall[1].method).toBe('POST')
     expect(String(pwCall[1].headers['content-type'])).toMatch(
@@ -104,7 +109,7 @@ describe('runWso2Login', () => {
     expect(String(pwCall[1].headers['cookie'])).toContain('commonAuthId=abc123')
 
     // Step 3: OTP POST
-    const otpCall = f.mock.calls[2] as any
+    const otpCall = callsOf(f)[2] as any
     expect(String(otpCall[0])).toBe(`${IAM}/commonauth`)
     const otpBody = bodyOf(otpCall)
     expect(otpBody.get('token')).toBe('123456')
@@ -112,10 +117,10 @@ describe('runWso2Login', () => {
     expect(otpBody.get('password')).toBeNull()
 
     // Step 4: follow the authorize redirect
-    expect(String(f.mock.calls[3][0])).toBe(`${IAM}/oauth2/authorize?sessionDataKey=K3`)
+    expect(String(callsOf(f)[3]![0])).toBe(`${IAM}/oauth2/authorize?sessionDataKey=K3`)
 
     // Step 5: token exchange
-    const tokenCall = f.mock.calls[4] as any
+    const tokenCall = callsOf(f)[4] as any
     expect(String(tokenCall[0])).toBe(`${IAM}/oauth2/token`)
     const tokenBody = bodyOf(tokenCall)
     expect(tokenBody.get('grant_type')).toBe('authorization_code')

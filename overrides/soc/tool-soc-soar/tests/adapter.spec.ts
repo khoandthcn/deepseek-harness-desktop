@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { SoarAdapter } from '../src/adapter.ts'
+import { SoarAdapter, type SoarHttp } from '../src/adapter.ts'
+
+/** vitest types `mock.calls` from the stub's own signature; these tests read
+ * positional args the stubs do not declare, so narrow once here. */
+const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
+  m.mock.calls as unknown as any[][]
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -27,7 +32,7 @@ function stubHttp(responses: Record<string, unknown>) {
 
 function adapter(responses: Record<string, unknown>, tenant = 'MASTER') {
   const http = stubHttp(responses)
-  return { http, soar: new SoarAdapter(http, tenant) }
+  return { http, soar: new SoarAdapter(http as unknown as SoarHttp, tenant) }
 }
 
 describe('SoarAdapter', () => {
@@ -38,7 +43,7 @@ describe('SoarAdapter', () => {
     const env = await soar.searchAlerts({ severity: 'high', page: 1, size: 20, sort: '-created' })
     expect(env.data[0]!.severity).toBe('high')
 
-    const [path, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/soarapi/v1/MASTER/alert/_search')
     expect(body._from).toBe(20)
     expect(body._size).toBe(20)
@@ -53,7 +58,7 @@ describe('SoarAdapter', () => {
       '/soarapi/v1/MASTER/alert/_search': fixture('alert_search.json'),
     })
     await soar.searchAlerts({})
-    const [, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(body).toMatchObject({ _from: 0, _size: 50, _sort: '-created', _counting: true, query: '' })
   })
 
@@ -63,7 +68,7 @@ describe('SoarAdapter', () => {
     })
     const env = await soar.listAlertTypes()
     expect(Array.isArray(env.data[0]!.alert_fields)).toBe(true)
-    const [path, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/soarapi/v1/MASTER/alert_type/_search')
     expect(body).toEqual({ _from: 0, _size: 100, _counting: true })
   })
@@ -75,7 +80,7 @@ describe('SoarAdapter', () => {
     const env = await soar.listAlertFields()
     expect(env.count).toBe(0)
     expect(Array.isArray(env.data)).toBe(true)
-    const [path, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/soarapi/v1/MASTER/alert_field/_search')
     expect(body).toEqual({ _from: 0, _size: 500, _sort: 'name', _counting: true, query: '' })
   })
@@ -86,7 +91,7 @@ describe('SoarAdapter', () => {
     })
     const env = await soar.searchTickets({ rawQuery: 'status = "OPEN"', page: 2, size: 10 })
     expect(env.data[0]!.status).toBe('OPEN')
-    const [path, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/soarapi/v1/MASTER/ticket/_search')
     expect(body).toEqual({
       _from: 20,
@@ -103,7 +108,7 @@ describe('SoarAdapter', () => {
       '/soarapi/v1/MASTER/ticket/_search': { count: 0, data: [] },
     })
     await soar.searchTickets({})
-    const [, body] = http.postJson.mock.calls[0] as [string, Record<string, unknown>]
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(body.query).toBe('')
   })
 
@@ -115,7 +120,7 @@ describe('SoarAdapter', () => {
     expect(nl.notifications[0]!.object).toBe('ticket')
     expect(nl.counting_all).toBe(0)
     expect(nl.counting_unread).toBe(0)
-    const [path] = http.getJson.mock.calls[0] as [string]
+    const [path] = callsOf(http.getJson)[0] as [string]
     expect(path).toContain('/notification/v1/notification')
     expect(path).toContain('_from=0')
     expect(path).toContain('_size=50')
@@ -128,7 +133,7 @@ describe('SoarAdapter', () => {
       '/notification/v1/notification': fixture('notification.json'),
     })
     await soar.listNotifications({ size: 5, onlyUnread: true })
-    const [path] = http.getJson.mock.calls[0] as [string]
+    const [path] = callsOf(http.getJson)[0] as [string]
     expect(path).toContain('_size=5')
     expect(path).toContain('_only_unread=true')
   })
@@ -139,9 +144,11 @@ describe('SoarAdapter', () => {
       'ACME',
     )
     await soar.searchAlerts({})
-    expect(http.postJson.mock.calls[0]![0]).toBe('/soarapi/v1/ACME/alert/_search')
+    expect(callsOf(http.postJson)[0]![0]).toBe('/soarapi/v1/ACME/alert/_search')
 
-    const bare = new SoarAdapter(stubHttp({ '/soarapi/v1/MASTER/alert/_search': { count: 0, data: [] } }))
+    const bare = new SoarAdapter(
+      stubHttp({ '/soarapi/v1/MASTER/alert/_search': { count: 0, data: [] } }) as unknown as SoarHttp,
+    )
     const env = await bare.searchAlerts({})
     expect(env.data).toEqual([])
   })

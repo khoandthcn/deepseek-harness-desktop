@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSoarToolDefs } from '../src/tools.ts'
 
+/** vitest types `mock.calls` from the stub's own signature; these tests read
+ * positional args the stubs do not declare, so narrow once here. */
+const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
+  m.mock.calls as unknown as any[][]
+
 /** The five adapter methods the tools call, all as spies. */
 function fakeAdapter() {
   return {
@@ -128,7 +133,7 @@ describe('authenticated happy paths', () => {
     const out = await byName('soar_search_alerts').execute(args)
 
     expect(adapter.searchAlerts).toHaveBeenCalledTimes(1)
-    expect(adapter.searchAlerts.mock.calls[0]![0]).toEqual({
+    expect(callsOf(adapter.searchAlerts)[0]![0]).toEqual({
       severity: 'high',
       status: 'NEW',
       createdFrom: 1780718815823,
