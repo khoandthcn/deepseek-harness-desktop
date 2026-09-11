@@ -8,3 +8,6 @@
 # Local docs: install guide and SOC design notes. They name internal
 # systems, so they stay on this machine and out of the public repo.
 docs/
+
+# Real SOC endpoints for local builds. Internal systems: never committed.
+soc-endpoints.json

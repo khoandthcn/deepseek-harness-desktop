@@ -260,6 +260,17 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
       return path === '' || SOC_PACKAGE_ENTRIES.has(path.split(sep)[0])
     },
   })
+  // The release packer requires one version across the whole `dsh` family, so
+  // read it off a package that is certainly a member rather than hardcoding it:
+  // the checkout's ref then dictates the version, as it should.
+  const familyVersion = JSON.parse(
+    readFileSync(join(root, 'packages', 'core', 'tools', 'package.json'), 'utf8'),
+  ).version
+  const manifestPath = join(to, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.version = familyVersion
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
   const tsconfigPath = join(to, 'tsconfig.json')
   const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'))
   tsconfig.references = SOC_PACKAGE_REFERENCES[name].map(path => ({ path }))
