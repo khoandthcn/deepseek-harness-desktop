@@ -1,0 +1,19 @@
+{
+  "counting_all": 0,
+  "counting_unread": 0,
+  "notifications": [
+    {
+      "notification_id": "redacted",
+      "username": "redacted",
+      "actor": "redacted",
+      "object": "ticket",
+      "object_id": "redacted",
+      "action_type": "updated",
+      "message": "redacted",
+      "created_time": 0,
+      "unread": true,
+      "tenant": "MASTER"
+    }
+  ],
+  "_comment": "Schema ẩn danh từ discovery vòng 2. Value placeholder, KHÔNG data thật. Source: GET /notification/v1/notification"
+}

@@ -1,0 +1,15 @@
+{
+  "count": 0,
+  "data": [
+    {
+      "_id": 0,
+      "data_type": "string",
+      "description": null,
+      "is_built_in": false,
+      "mean_type": "string",
+      "name": "redacted",
+      "options": null
+    }
+  ],
+  "_comment": "Schema ẩn danh từ discovery vòng 2. Value placeholder, KHÔNG data thật. Source: POST /soarapi/v1/MASTER/alert_field/_search"
+}

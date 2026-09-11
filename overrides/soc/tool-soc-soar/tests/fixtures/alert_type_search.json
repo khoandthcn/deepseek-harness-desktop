@@ -1,0 +1,29 @@
+{
+  "count": 0,
+  "data": [
+    {
+      "_id": 0,
+      "alert_field_ids": [
+        0
+      ],
+      "alert_fields": [
+        "redacted"
+      ],
+      "description": "redacted",
+      "entity_type": [
+        {
+          "_id": 0,
+          "key": "redacted",
+          "label": "redacted",
+          "name": "redacted",
+          "type": "alert"
+        }
+      ],
+      "last_updated": 0,
+      "name": "redacted",
+      "tenant": "MASTER",
+      "user_update": "redacted"
+    }
+  ],
+  "_comment": "Schema ẩn danh từ discovery vòng 2. Value placeholder, KHÔNG data thật. Source: POST /soarapi/v1/MASTER/alert_type/_search"
+}
