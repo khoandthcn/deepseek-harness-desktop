@@ -29,15 +29,15 @@ export interface Wso2LoginOptions {
   /** Current one-time password from the user's authenticator. */
   otp: string
   /** OAuth scope; defaults to `openid`. */
-  scope?: string
+  scope?: string | undefined
   /** Injectable fetch, for tests. Defaults to the global `fetch`. */
-  fetchImpl?: FetchLike
+  fetchImpl?: FetchLike | undefined
   /**
    * Called once, on success, with a snapshot of the cookie jar built during the
    * flow (`commonAuthId`, the WAF `D1N` cookie, ...). Downstream systems such as
    * SOAR authenticate with these session cookies, so the caller needs a copy.
    */
-  onCookies?: (cookies: Record<string, string>) => void
+  onCookies?: ((cookies: Record<string, string>) => void) | undefined
 }
 
 export interface Wso2LoginResult {

@@ -4,9 +4,9 @@
  */
 export class SocError extends Error {
   /** Optional HTTP status associated with the error. */
-  readonly status?: number
+  readonly status?: number | undefined
   /** Optional parsed/raw response body for diagnostics. */
-  readonly body?: unknown
+  readonly body?: unknown | undefined
 
   constructor(message: string, opts?: { status?: number; body?: unknown; cause?: unknown }) {
     super(message, opts?.cause !== undefined ? { cause: opts.cause } : undefined)

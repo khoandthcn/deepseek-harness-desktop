@@ -18,67 +18,67 @@ export interface SearchEnvelope<T> {
 }
 
 export interface Alert extends Extra {
-  _id?: number | null
-  alert_id?: string | null
-  severity?: string | null
-  status?: string | null
-  cycir_base_status?: string | null
-  assignee?: string | null
-  category?: string | null
-  attack_tactic?: string | null
-  attack_technique?: string | null
-  created?: number | null
-  last_updated?: number | null
-  sla?: number | null
-  sla_expired?: boolean | null
-  description?: string | null
-  message?: string | null
-  hostname?: string | null
-  source?: string | null
-  rule_id?: string | null
-  tenant?: string | null
-  type?: string | null
-  unread?: boolean | null
+  _id?: number | null | undefined
+  alert_id?: string | null | undefined
+  severity?: string | null | undefined
+  status?: string | null | undefined
+  cycir_base_status?: string | null | undefined
+  assignee?: string | null | undefined
+  category?: string | null | undefined
+  attack_tactic?: string | null | undefined
+  attack_technique?: string | null | undefined
+  created?: number | null | undefined
+  last_updated?: number | null | undefined
+  sla?: number | null | undefined
+  sla_expired?: boolean | null | undefined
+  description?: string | null | undefined
+  message?: string | null | undefined
+  hostname?: string | null | undefined
+  source?: string | null | undefined
+  rule_id?: string | null | undefined
+  tenant?: string | null | undefined
+  type?: string | null | undefined
+  unread?: boolean | null | undefined
 }
 
 export interface AlertType extends Extra {
-  _id?: number | null
-  name?: string | null
-  description?: string | null
-  alert_field_ids?: number[]
-  alert_fields?: string[]
-  tenant?: string | null
+  _id?: number | null | undefined
+  name?: string | null | undefined
+  description?: string | null | undefined
+  alert_field_ids?: number[] | undefined
+  alert_fields?: string[] | undefined
+  tenant?: string | null | undefined
 }
 
 export interface AlertField extends Extra {
-  _id?: number | null
-  name?: string | null
-  data_type?: string | null
-  mean_type?: string | null
-  is_built_in?: boolean | null
-  description?: string | null
+  _id?: number | null | undefined
+  name?: string | null | undefined
+  data_type?: string | null | undefined
+  mean_type?: string | null | undefined
+  is_built_in?: boolean | null | undefined
+  description?: string | null | undefined
 }
 
 /** Ticket/case — shape provisional (api-map §7); unknown fields pass through. */
 export interface Ticket extends Extra {
-  _id?: number | null
-  object_id?: string | null
-  status?: string | null
-  severity?: string | null
-  created?: number | null
+  _id?: number | null | undefined
+  object_id?: string | null | undefined
+  status?: string | null | undefined
+  severity?: string | null | undefined
+  created?: number | null | undefined
 }
 
 export interface Notification extends Extra {
-  notification_id?: string | null
-  object?: string | null
-  object_id?: string | null
-  action_type?: string | null
-  message?: string | null
-  actor?: string | null
-  username?: string | null
-  created_time?: number | null
-  unread?: boolean | null
-  tenant?: string | null
+  notification_id?: string | null | undefined
+  object?: string | null | undefined
+  object_id?: string | null | undefined
+  action_type?: string | null | undefined
+  message?: string | null | undefined
+  actor?: string | null | undefined
+  username?: string | null | undefined
+  created_time?: number | null | undefined
+  unread?: boolean | null | undefined
+  tenant?: string | null | undefined
 }
 
 export interface NotificationList extends Extra {

@@ -5,12 +5,12 @@
  */
 
 export interface AlertQueryFilters {
-  severity?: string | null
-  status?: string | null
-  createdFrom?: number | null
-  createdTo?: number | null
+  severity?: string | null | undefined
+  status?: string | null | undefined
+  createdFrom?: number | null | undefined
+  createdTo?: number | null | undefined
   /** Escape hatch: used verbatim, skipping every structured clause. */
-  rawQuery?: string | null
+  rawQuery?: string | null | undefined
 }
 
 /**

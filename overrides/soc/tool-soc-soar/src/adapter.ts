@@ -25,29 +25,29 @@ export interface SoarHttp {
 }
 
 export interface SearchAlertsOptions {
-  severity?: string | null
-  status?: string | null
-  createdFrom?: number | null
-  createdTo?: number | null
-  rawQuery?: string | null
-  page?: number
-  size?: number
-  sort?: string
+  severity?: string | null | undefined
+  status?: string | null | undefined
+  createdFrom?: number | null | undefined
+  createdTo?: number | null | undefined
+  rawQuery?: string | null | undefined
+  page?: number | undefined
+  size?: number | undefined
+  sort?: string | undefined
 }
 
 export interface PageOptions {
-  page?: number
-  size?: number
+  page?: number | undefined
+  size?: number | undefined
 }
 
 export interface SearchTicketsOptions extends PageOptions {
-  rawQuery?: string | null
-  sort?: string
+  rawQuery?: string | null | undefined
+  sort?: string | undefined
 }
 
 export interface ListNotificationsOptions {
-  size?: number
-  onlyUnread?: boolean
+  size?: number | undefined
+  onlyUnread?: boolean | undefined
 }
 
 export class SoarAdapter {

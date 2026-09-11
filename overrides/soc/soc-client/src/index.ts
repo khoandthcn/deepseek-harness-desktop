@@ -10,11 +10,11 @@ export * from './errors.ts'
 
 export interface SocHttpOptions {
   /** Injectable fetch implementation (defaults to the global `fetch`). */
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch | undefined
   /** Hook returning extra headers to merge into each request (e.g. Authorization). */
-  authHeaders?: () => Record<string, string>
+  authHeaders?: (() => Record<string, string>) | undefined
   /** WAF `D1N` cookie value; when set, attached as `Cookie: D1N=...`. */
-  d1nCookie?: string
+  d1nCookie?: string | undefined
 }
 
 /**
@@ -27,8 +27,8 @@ export interface SocHttpOptions {
 export class SocHttp {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
-  private readonly authHeaders?: () => Record<string, string>
-  private readonly d1nCookie?: string
+  private readonly authHeaders?: (() => Record<string, string>) | undefined
+  private readonly d1nCookie?: string | undefined
 
   constructor(baseUrl: string, opts: SocHttpOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')

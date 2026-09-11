@@ -228,6 +228,21 @@ if (overlayText.includes(`default: ${PRESET_ID}`)) {
 // `lib`, `package-lock.json` and `.gitignore` are local build artefacts of this
 // repository and must never land in the checkout.
 const SOC_PACKAGE_ENTRIES = new Set(['package.json', 'tsconfig.json', 'src', 'tests'])
+// Project references are added here rather than kept in `overrides/`, because the
+// paths they name (`vendor/`, `packages/core/`) only exist inside the checkout —
+// carrying them in the source tree would break `vitest` runs against the package
+// in place. `tsc -b` needs them to build each dependency before its dependents.
+const SOC_PACKAGE_REFERENCES = {
+  'soc-client': [],
+  'soc-auth': ['../../../vendor/cosmokit', '../../../vendor/cordis'],
+  'tool-soc-soar': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../core/tools',
+    '../soc-client',
+    '../soc-auth',
+  ],
+}
 for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
@@ -240,6 +255,10 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
       return path === '' || SOC_PACKAGE_ENTRIES.has(path.split(sep)[0])
     },
   })
+  const tsconfigPath = join(to, 'tsconfig.json')
+  const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'))
+  tsconfig.references = SOC_PACKAGE_REFERENCES[name].map(path => ({ path }))
+  writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`)
   console.log(`copied: packages/soc/${name}`)
 }
 

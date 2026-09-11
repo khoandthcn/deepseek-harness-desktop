@@ -49,12 +49,12 @@ export interface SocAuthLike {
  */
 export interface ToolParamSpec {
   type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object' | 'json'
-  required?: true
-  description?: string
-  enum?: readonly string[]
-  items?: ToolParamSpec
-  properties?: Record<string, ToolParamSpec>
-  additionalProperties?: boolean
+  required?: true | undefined
+  description?: string | undefined
+  enum?: readonly string[] | undefined
+  items?: ToolParamSpec | undefined
+  properties?: Record<string, ToolParamSpec> | undefined
+  additionalProperties?: boolean | undefined
 }
 
 /** A plain tool definition, shaped for `defineTool` but independent of it. */

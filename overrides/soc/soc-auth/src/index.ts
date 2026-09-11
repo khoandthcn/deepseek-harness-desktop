@@ -29,16 +29,16 @@ export interface Config {
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
   soarBaseUrl: string
   /** SOAR tenant; defaults to `MASTER`. */
-  tenant?: string
+  tenant?: string | undefined
   /** SOAR OAuth client id used by the access exchange; defaults to `SOAR_CLIENT`. */
-  soarClientId?: string
+  soarClientId?: string | undefined
   /**
    * Credential *references*, never the values themselves: the name of the entry
    * to read from `ctx.credentials`, falling back to the environment variable of
    * the same name. Default to `SOC_USERNAME` / `SOC_PASSWORD`.
    */
-  usernameRef?: string
-  passwordRef?: string
+  usernameRef?: string | undefined
+  passwordRef?: string | undefined
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -88,5 +88,5 @@ export function apply(ctx: Context, config: Config): void {
     password: resolveCredential(ctx, passwordRef),
   })
 
-  ctx.provide('socAuth', service, true)
+  ctx.provide('socAuth', service)
 }

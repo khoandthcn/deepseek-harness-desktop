@@ -1,0 +1,27 @@
+{
+  // Stand-in for the upstream tsconfig.base.json.
+  //
+  // The soc packages under overrides/ are copied into <upstream>/packages/soc/,
+  // where `../../../tsconfig.base.json` resolves to the real upstream base. This
+  // file makes that same relative path resolve here too, so their tests run in
+  // place without a checkout. Keep the flags that change how sources are read
+  // (.ts-extension imports) and the strictness upstream enforces, so a type
+  // error shows up here rather than at `tsc -b` time.
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  }
+}

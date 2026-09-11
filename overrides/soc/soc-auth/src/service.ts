@@ -33,15 +33,15 @@ export interface SocAuthServiceOptions {
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
   soarBaseUrl: string
   /** SOAR tenant; `MASTER` unless the deployment says otherwise. */
-  tenant?: string
+  tenant?: string | undefined
   /** SOAR OAuth client id used by the access exchange. */
-  soarClientId?: string
+  soarClientId?: string | undefined
   username: string
   password: string
   /** Injectable fetch, for tests. Defaults to the global `fetch`. */
-  fetchImpl?: FetchLike
+  fetchImpl?: FetchLike | undefined
   /** Injectable clock in epoch milliseconds, for expiry tests. */
-  now?: () => number
+  now?: (() => number) | undefined
 }
 
 export class SocAuthService {
@@ -53,7 +53,7 @@ export class SocAuthService {
   private readonly soarClientId: string
   private readonly username: string
   private readonly password: string
-  private readonly fetchImpl?: FetchLike
+  private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
 
   /** SOC session state, set by `login()` and cleared when it is invalidated. */

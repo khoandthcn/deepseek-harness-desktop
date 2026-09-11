@@ -14,12 +14,23 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { SocHttp } from '@deepseek-ai/dsh-soc-client'
 import type {} from '@deepseek-ai/dsh-soc-auth'
 import { SoarAdapter, type SoarHttp } from './adapter.ts'
-import { createSoarToolDefs } from './tools.ts'
+import { createSoarToolDefs, type SoarToolDef } from './tools.ts'
 
 export * from './contracts.ts'
 export * from './query.ts'
 export * from './adapter.ts'
 export * from './tools.ts'
+
+/**
+ * The definitions are typed against a local structural mirror of the schema DSL
+ * (`tools.ts` imports nothing from `dsh-tools`), so `defineTool`'s per-literal
+ * generic inference cannot apply here. Aliasing the function to a concrete,
+ * non-generic signature keeps the boundary explicit and stops the checker from
+ * instantiating those generics against the mirror.
+ */
+const define = defineTool as unknown as (
+  options: SoarToolDef,
+) => Parameters<Context['tools']['register']>[0]
 
 export const name = 'tool-soc-soar'
 
@@ -30,7 +41,7 @@ export interface Config {
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
   soarBaseUrl: string
   /** SOAR tenant; defaults to `MASTER`. */
-  tenant?: string
+  tenant?: string | undefined
 }
 
 /**
@@ -63,9 +74,6 @@ export function apply(ctx: Context, config: Config): void {
   const adapter = new SoarAdapter(soarHttp, config.tenant ?? 'MASTER')
 
   for (const def of createSoarToolDefs({ adapter, auth })) {
-    // The definitions are typed against a local structural mirror of the schema
-    // DSL (tools.ts imports nothing from dsh-tools), so the precise generic
-    // inference `defineTool` performs on a literal is not available here.
-    ctx.tools.register(defineTool(def as Parameters<typeof defineTool>[0]))
+    ctx.tools.register(define(def))
   }
 }

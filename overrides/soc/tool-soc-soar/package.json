@@ -8,12 +8,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-soc-client": "workspace:*"
+    "@deepseek-ai/dsh-soc-client": "workspace:^"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-soc-auth": "*",
-    "@deepseek-ai/dsh-tools": "*"
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-soc-auth": "workspace:^",
+    "@deepseek-ai/dsh-tools": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5",
