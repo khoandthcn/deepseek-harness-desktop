@@ -3,7 +3,10 @@
     "target": "ESNext",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
     "strict": true,
     "declaration": true,
     "esModuleInterop": true,
@@ -12,5 +15,7 @@
     "outDir": "lib",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

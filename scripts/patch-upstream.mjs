@@ -13,10 +13,13 @@
 //      - onboarding copy (English + Chinese)
 //      - Desktop default agent preset = standard-brave
 // 3. The Brave Search web-search preset, generated into the shipped preset root.
+// 4. The SOC native packages (overrides/soc/* → packages/soc/*) and the
+//    `soc-cloud` preset that mounts them.
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { PRESET_ID, writeSearchPreset } from './make-search-preset.mjs'
+import { PRESET_ID as SOC_PRESET_ID, writeSocPreset } from './make-soc-preset.mjs'
 
 const root = resolve(process.argv[2] ?? 'upstream')
 const here = resolve(import.meta.dirname, '..')
@@ -217,3 +220,28 @@ if (overlayText.includes(`default: ${PRESET_ID}`)) {
   writeFileSync(join(root, overlay), `${overlayText.trimEnd()}\n\n# deepseek-harness-desktop: Brave Search web-search preset for new sessions.\n- id: agent-presets\n  config:\n    default: ${PRESET_ID}\n`)
   console.log(`patched: ${overlay}`)
 }
+
+// ── 4. SOC native packages + the soc-cloud preset that mounts them ───────────
+// These are new first-party workspace packages, so there is no upstream file to
+// hash-guard: the sources are simply copied in. The workspace glob `packages/*/*`
+// already picks up `packages/soc/*`. Only the sources travel — `node_modules`,
+// `lib`, `package-lock.json` and `.gitignore` are local build artefacts of this
+// repository and must never land in the checkout.
+const SOC_PACKAGE_ENTRIES = new Set(['package.json', 'tsconfig.json', 'src', 'tests'])
+for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
+  const from = join(here, 'overrides', 'soc', name)
+  const to = join(root, 'packages', 'soc', name)
+  cpSync(from, to, {
+    recursive: true,
+    filter: source => {
+      const path = relative(from, source)
+      // The package root itself, then only the allowed top-level entries and
+      // everything beneath them.
+      return path === '' || SOC_PACKAGE_ENTRIES.has(path.split(sep)[0])
+    },
+  })
+  console.log(`copied: packages/soc/${name}`)
+}
+
+writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
+console.log(`generated: packages/preset/agent-presets/presets/${SOC_PRESET_ID}`)
