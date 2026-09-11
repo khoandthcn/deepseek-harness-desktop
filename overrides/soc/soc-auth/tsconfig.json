@@ -3,14 +3,19 @@
     "target": "ESNext",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ESNext", "DOM"],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
     "strict": true,
     "declaration": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "outDir": "lib",
+    "outDir": "lib/types",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

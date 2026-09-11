@@ -243,5 +243,25 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar']) {
   console.log(`copied: packages/soc/${name}`)
 }
 
+// The soc packages must be registered like any other workspace package: a `paths`
+// entry so source-plane imports resolve, and a host aggregate reference so
+// `tsc -b` actually emits their lib/.
+patch(
+  'tsconfig.base.json',
+  '      "@deepseek-ai/dsh-tool-todo": ["./packages/todo/tool-todo/src"],\n',
+  '      "@deepseek-ai/dsh-tool-todo": ["./packages/todo/tool-todo/src"],\n'
+  + '      "@deepseek-ai/dsh-soc-client": ["./packages/soc/soc-client/src"],\n'
+  + '      "@deepseek-ai/dsh-soc-auth": ["./packages/soc/soc-auth/src"],\n'
+  + '      "@deepseek-ai/dsh-tool-soc-soar": ["./packages/soc/tool-soc-soar/src"],\n',
+)
+patch(
+  'tsconfig.host.json',
+  '    { "path": "./packages/client/ui-deliverables/tsconfig.host.json" },\n',
+  '    { "path": "./packages/client/ui-deliverables/tsconfig.host.json" },\n'
+  + '    { "path": "./packages/soc/soc-client" },\n'
+  + '    { "path": "./packages/soc/soc-auth" },\n'
+  + '    { "path": "./packages/soc/tool-soc-soar" },\n',
+)
+
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
 console.log(`generated: packages/preset/agent-presets/presets/${SOC_PRESET_ID}`)
