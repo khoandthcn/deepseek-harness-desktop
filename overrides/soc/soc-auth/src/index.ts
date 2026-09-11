@@ -13,8 +13,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
+import { requireConfig } from './config.ts'
 import { SocAuthService } from './service.ts'
 
+export * from './config.ts'
 export * from './wso2.ts'
 export * from './service.ts'
 
@@ -78,17 +80,19 @@ export async function resolveCredential(ctx: Context, ref: string): Promise<stri
   return value
 }
 
-export function apply(ctx: Context, config: Config): void {
-  const usernameRef = config.usernameRef ?? 'SOC_USERNAME'
-  const passwordRef = config.passwordRef ?? 'SOC_PASSWORD'
+export function apply(ctx: Context, config: Config | undefined): void {
+  // A row with no `config:` block arrives as undefined; say so plainly.
+  const checked = requireConfig(config)
+  const usernameRef = checked.usernameRef ?? 'SOC_USERNAME'
+  const passwordRef = checked.passwordRef ?? 'SOC_PASSWORD'
 
   const service = new SocAuthService({
-    iamUrl: config.iamUrl,
-    clientId: config.clientId,
-    redirectUri: config.redirectUri,
-    soarBaseUrl: config.soarBaseUrl,
-    tenant: config.tenant,
-    soarClientId: config.soarClientId,
+    iamUrl: checked.iamUrl,
+    clientId: checked.clientId,
+    redirectUri: checked.redirectUri,
+    soarBaseUrl: checked.soarBaseUrl,
+    tenant: checked.tenant,
+    soarClientId: checked.soarClientId,
     credentials: async () => ({
       username: await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),

@@ -38,8 +38,11 @@ export const name = 'tool-soc-soar'
 export const inject = ['tools', 'socAuth']
 
 export interface Config {
-  /** Base URL of the SOAR API, e.g. `https://soar.example`. */
-  soarBaseUrl: string
+  /**
+   * Override the SOAR base URL. Normally absent: the endpoint comes from the
+   * `soc-auth` plugin, which is where the deployment is configured.
+   */
+  soarBaseUrl?: string | undefined
   /** SOAR tenant; defaults to `MASTER`. */
   tenant?: string | undefined
 }
@@ -47,14 +50,18 @@ export interface Config {
 /**
  * Register the SOAR tool suite on `ctx.tools`.
  * @param ctx - registrant context carrying `tools` and `socAuth`.
- * @param config - SOAR endpoint and tenant.
+ * @param config - optional overrides; a preset row for this plugin carries no
+ *   config at all, so this arrives as `undefined`.
  */
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: Config = {}): void {
   const auth = ctx.socAuth
+  // Configured once, on soc-auth.
+  const soarBaseUrl = config.soarBaseUrl ?? auth.soarBaseUrl
+  const tenant = config.tenant ?? auth.tenant
 
   // The Bearer is re-read per request, so a refresh between calls is picked up
   // without rebuilding the client.
-  const http = new SocHttp(config.soarBaseUrl, {
+  const http = new SocHttp(soarBaseUrl, {
     authHeaders: () => auth.authHeadersForSoar(),
   })
 
@@ -71,7 +78,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
-  const adapter = new SoarAdapter(soarHttp, config.tenant ?? 'MASTER')
+  const adapter = new SoarAdapter(soarHttp, tenant)
 
   for (const def of createSoarToolDefs({ adapter, auth })) {
     ctx.tools.register(define(def))

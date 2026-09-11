@@ -29,11 +29,18 @@ async function setup(): Promise<Context> {
     redirectUri: 'https://soc.example',
     soarBaseUrl: 'https://soar.example',
   })
-  await ctx.plugin(soarTools, { soarBaseUrl: 'https://soar.example' })
+  // Exactly as the preset mounts it: a row with no `config:` block.
+  await ctx.plugin(soarTools)
   return ctx
 }
 
 describe('tool-soc-soar wiring', () => {
+  it('takes the SOAR endpoint from soc-auth when the row carries no config', async () => {
+    const ctx = await setup()
+    expect(ctx.socAuth.soarBaseUrl).toBe('https://soar.example')
+    expect(ctx.socAuth.tenant).toBe('MASTER')
+  })
+
   it('mounts without credentials and fails closed when logged out', async () => {
     const ctx = await setup()
     const result = await ctx.tools.execute({

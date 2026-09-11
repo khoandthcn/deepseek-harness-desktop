@@ -52,8 +52,14 @@ export class SocAuthService {
   private readonly iamUrl: string
   private readonly clientId: string
   private readonly redirectUri: string
-  private readonly soarBaseUrl: string
-  private readonly tenant: string
+  /**
+   * Base URL of the SOAR API, without a trailing slash. Public because the
+   * SOAR tool plugin reads it from here: the endpoint is configured once, on
+   * this plugin, so the two cannot drift apart.
+   */
+  readonly soarBaseUrl: string
+  /** SOAR tenant, defaulted at construction. Public for the same reason. */
+  readonly tenant: string
   private readonly soarClientId: string
   private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
