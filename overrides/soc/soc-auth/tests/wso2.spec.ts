@@ -208,37 +208,30 @@ describe('establishAppSession', () => {
   const SOAR = 'https://soar.example'
   const CALLBACK = `${SOAR}/callback`
 
-  it('rides the SSO cookie to the system callback and returns the token it sets', async () => {
-    const f = sequenceFetch([
-      // authorize, SSO active: straight to the system callback, no login form
-      redirect(`${CALLBACK}?code=APPCODE`),
-      // the callback sets the session cookie the system keys on
-      redirect(`${SOAR}/`, 'token=soar-session; Path=/'),
-      // app root: a non-redirect ends the chain
-      new Response('ok', { status: 200 }),
-    ])
-    const jar = await establishAppSession({
+  it('rides the SSO cookie and returns the code the callback carries', async () => {
+    // With the SSO session, authorize 302s straight to the system callback with
+    // the code — no login form, no further hops.
+    const f = sequenceFetch([redirect(`${CALLBACK}?code=APPCODE&session_state=xyz`)])
+    const { code, cookies } = await establishAppSession({
       iamUrl: IAM,
       clientId: 'SOAR_CLIENT',
       redirectUri: CALLBACK,
       cookies: { commonAuthId: 'abc123', D1N: 'waf' },
       fetchImpl: f as any,
     })
-    expect(jar['token']).toBe('soar-session')
-    expect(jar['commonAuthId']).toBe('abc123')
-    // the SSO cookie was carried on the very first authorize
-    expect(String(callsOf(f)[0]![1].headers['cookie'])).toContain('commonAuthId=abc123')
-    // the first hop is the system authorize with its own client and callback
+    expect(code).toBe('APPCODE')
+    // the WAF cookie is carried through for the code exchange that follows
+    expect(cookies['D1N']).toBe('waf')
+    // the SSO cookie rode the authorize, and it used the system's own client/callback
     const authorize = new URL(String(callsOf(f)[0]![0]))
+    expect(String(callsOf(f)[0]![1].headers['cookie'])).toContain('commonAuthId=abc123')
     expect(authorize.searchParams.get('client_id')).toBe('SOAR_CLIENT')
     expect(authorize.searchParams.get('redirect_uri')).toBe(CALLBACK)
   })
 
   it('fails with a re-login message when the SSO session has lapsed', async () => {
     // No SSO: authorize bounces back to the login form.
-    const f = sequenceFetch([
-      redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K1`),
-    ])
+    const f = sequenceFetch([redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K1`)])
     await expect(establishAppSession({
       iamUrl: IAM,
       clientId: 'SOAR_CLIENT',

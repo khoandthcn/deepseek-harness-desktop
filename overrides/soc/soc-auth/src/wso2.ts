@@ -137,12 +137,15 @@ export interface AppSessionOptions {
  * (SOAR: `token`). This follows that redirect chain — carrying and collecting
  * cookies, adopting the WAF `D1N` bootstrap if it appears — and returns the jar.
  *
- * @returns every cookie collected across the handshake, for the caller to send
- *   on its API requests.
+ * @returns the authorization `code` from the system callback and the cookies
+ *   collected on the way (the WAF `D1N`), for the caller to exchange the code
+ *   for the system's session and to send on its API requests.
  * @throws when the chain lands back on the login form: the SSO session is gone,
  *   so a fresh {@link runWso2Login} (a new OTP) is required.
  */
-export async function establishAppSession(opts: AppSessionOptions): Promise<Record<string, string>> {
+export async function establishAppSession(
+  opts: AppSessionOptions,
+): Promise<{ code: string, cookies: Record<string, string> }> {
   const doFetch: FetchLike = opts.fetchImpl ?? ((input, init) => fetch(input, init))
   const iam = opts.iamUrl.replace(/\/+$/, '')
   const jar = new CookieJar()
@@ -172,30 +175,45 @@ export async function establishAppSession(opts: AppSessionOptions): Promise<Reco
     return res
   }
 
-  let next: string | null = `${iam}/oauth2/authorize?${new URLSearchParams({
+  let next = `${iam}/oauth2/authorize?${new URLSearchParams({
     response_type: 'code',
     client_id: opts.clientId,
     redirect_uri: opts.redirectUri,
     scope: opts.scope ?? 'openid',
   }).toString()}`
+  const callbackBase = opts.redirectUri.split('?')[0]
 
-  // authorize → system callback → app root: a short chain. Cap the hops so a
-  // misconfiguration surfaces as an error rather than an infinite loop.
-  for (let hop = 0; hop < 8 && next; hop++) {
+  // authorize → system callback: with the SSO cookie the authorize skips the
+  // login form and 302s straight to the callback carrying `code`. Cap the hops
+  // so a misconfiguration surfaces as an error rather than an infinite loop.
+  for (let hop = 0; hop < 8; hop++) {
     const res = await request(next)
-    if (!REDIRECT_STATUSES.has(res.status)) break
+    if (!REDIRECT_STATUSES.has(res.status)) {
+      throw new SocAuthError(
+        `SOC auth: the ${opts.clientId} authorize did not redirect to its callback (HTTP ${res.status}).`,
+      )
+    }
     const location = res.headers.get('location')
-    if (!location) break
-    const abs = new URL(location, `${iam}/`).toString()
-    if (/login\.do|sessionDataKey/.test(abs)) {
+    if (!location) {
+      throw new SocAuthError(
+        `SOC auth: the ${opts.clientId} authorize returned a redirect without a location.`,
+      )
+    }
+    const abs = new URL(location, `${iam}/`)
+    if (/login\.do|sessionDataKey/.test(abs.href)) {
       throw new SocAuthError(
         'SOC auth: the WSO2 SSO session has expired — log in again with a new OTP.',
       )
     }
-    next = abs
+    const code = abs.searchParams.get('code')
+    if (code && `${abs.origin}${abs.pathname}` === callbackBase) {
+      return { code, cookies: jar.snapshot() }
+    }
+    next = abs.href
   }
-
-  return jar.snapshot()
+  throw new SocAuthError(
+    `SOC auth: the ${opts.clientId} authorize never reached its callback with a code.`,
+  )
 }
 
 export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginResult> {

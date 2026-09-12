@@ -63,17 +63,13 @@ function stubFetch(accessResponses: Response[], wso2: Response[] = wso2HappyPath
       if (!res) throw new Error('unexpected extra SOAR access call')
       return res
     }
-    // per-system callback: sets the session cookie the exchange keys on
-    if (u.startsWith(SOAR) && u.includes('/callback')) {
-      return redirect(`${SOAR}/`, 'token=soar-session; Path=/')
+    // per-system code exchange: returns the session_token, no Set-Cookie
+    if (u.startsWith(`${SOAR}/authen/callback`)) {
+      return json(200, { session_token: 'SESS-TOKEN', id_token: 'ID-TOKEN', access_token: 'AC' })
     }
-    // the app root the callback redirects to: a non-redirect ends the chain
-    if (u.startsWith(SOAR)) {
-      return html(200, 'app root')
-    }
-    // per-system authorize: recognised by the SSO cookie the login left behind
-    // The per-system authorize carries a redirect_uri and rides the SSO cookie;
-    // login's own step-4 authorize carries only a sessionDataKey.
+    // per-system authorize: carries a redirect_uri and rides the SSO cookie
+    // (login's own step-4 authorize carries only a sessionDataKey); 302s
+    // straight to the callback with the code.
     if (u.startsWith(`${IAM}/oauth2/authorize`) && u.includes('redirect_uri=')
       && cookieOf(init).includes('commonAuthId')) {
       return redirect(`${SOAR}/callback?code=APPCODE`)
@@ -257,8 +253,9 @@ describe('SocAuthService.authHeadersForSoar', () => {
 
     const headers = svc.authHeadersForSoar()
     expect(headers.Authorization).toBe('Bearer SOAR-1')
-    expect(headers.Cookie).toContain('commonAuthId=abc123')
+    // SOAR keys on the `token` cookie the SPA builds, carried with the WAF D1N
     expect(headers.Cookie).toContain('D1N=waf-cookie')
+    expect(headers.Cookie).toMatch(/token=\{.*SESS-TOKEN/)
 
     clock += 3600 * 1000
     await svc.soarBearer()

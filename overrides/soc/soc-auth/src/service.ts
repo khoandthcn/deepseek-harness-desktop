@@ -38,6 +38,8 @@ export interface SocAuthServiceOptions {
   soarClientId?: string | undefined
   /** SOAR OIDC callback URL. Defaults to `${soarBaseUrl}/callback`. */
   soarRedirectUri?: string | undefined
+  /** SOAR `authen` base that exchanges the code for a session. Defaults to `${soarBaseUrl}/authen`. */
+  soarAuthenUrl?: string | undefined
   /**
    * Supplies the login credentials when a login actually runs. A callback,
    * not two strings: the credentials seam is asynchronous, and the secret
@@ -64,6 +66,7 @@ export class SocAuthService {
   readonly tenant: string
   private readonly soarClientId: string
   private readonly soarRedirectUri: string
+  private readonly soarAuthenUrl: string
   private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
@@ -89,6 +92,7 @@ export class SocAuthService {
     this.tenant = opts.tenant ?? 'MASTER'
     this.soarClientId = opts.soarClientId ?? 'SOAR_CLIENT'
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
+    this.soarAuthenUrl = (opts.soarAuthenUrl ?? `${this.soarBaseUrl}/authen`).replace(/\/+$/, '')
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
     this.now = opts.now ?? (() => Date.now())
@@ -177,17 +181,64 @@ export class SocAuthService {
       .join('; ')
   }
 
-  private async exchangeSoarBearer(): Promise<string> {
-    const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
-    // SOAR runs its own OIDC authorize on top of the SSO login; its callback
-    // sets the `token` cookie the access exchange keys on.
-    this.soarCookies = await establishAppSession({
+  /**
+   * Acquire the SOAR per-system session: run SOAR's own authorize on top of the
+   * SSO login, exchange the returned code at `authen/callback` for a
+   * `session_token`, and build the `token` cookie SOAR keys on. That cookie is
+   * not a Set-Cookie — the SOAR SPA builds it in the browser as
+   * `JSON.stringify({ token: session_token, id_token })`, so we build it the
+   * same way here. The value is never logged.
+   * @returns the cookie jar to send on SOAR requests: `token` plus the WAF `D1N`.
+   */
+  private async acquireSoarSession(doFetch: FetchLike): Promise<Record<string, string>> {
+    const { code, cookies } = await establishAppSession({
       iamUrl: this.iamUrl,
       clientId: this.soarClientId,
       redirectUri: this.soarRedirectUri,
       cookies: this.cookies,
       fetchImpl: this.fetchImpl,
     })
+    const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')
+    const callbackUrl = `${this.soarAuthenUrl}/callback`
+    let res: Response
+    try {
+      res = await doFetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(cookieHeader ? { cookie: cookieHeader } : {}) },
+        body: JSON.stringify({ code, client_id: this.soarClientId }),
+      })
+    } catch (cause) {
+      throw new SocAuthError(`SOC auth: the SOAR code exchange (${callbackUrl}) failed (network error).`, { cause })
+    }
+    if (res.status !== 200) {
+      throw new SocAuthError(`SOC auth: the SOAR code exchange (${callbackUrl}) returned HTTP ${res.status}.`)
+    }
+    let payload: any
+    try {
+      payload = await res.json()
+    } catch (cause) {
+      throw new SocAuthError('SOC auth: the SOAR code exchange returned a non-JSON body.', { cause })
+    }
+    const sessionToken = payload?.session_token
+    if (typeof sessionToken !== 'string' || sessionToken.length === 0) {
+      throw new SocAuthError(
+        `SOC auth: the SOAR code exchange returned no session_token (response keys: ${safeKeys(payload)}).`,
+      )
+    }
+    const idToken = payload?.id_token
+    const tokenValue: Record<string, string> = { token: sessionToken }
+    if (typeof idToken === 'string' && idToken.length > 0 && idToken !== 'undefined') {
+      tokenValue.id_token = idToken
+    }
+    const jar: Record<string, string> = { token: JSON.stringify(tokenValue) }
+    if (cookies.D1N !== undefined) jar.D1N = cookies.D1N
+    return jar
+  }
+
+  private async exchangeSoarBearer(): Promise<string> {
+    const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
+    // SOAR runs its own OIDC authorize on top of the SSO login.
+    this.soarCookies = await this.acquireSoarSession(doFetch)
     const url = `${this.soarBaseUrl}/access_control/access`
     let res: Response
     try {
