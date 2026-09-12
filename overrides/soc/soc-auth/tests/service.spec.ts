@@ -165,6 +165,10 @@ describe('SocAuthService.soarBearer', () => {
       scopes: '',
     })
     expect(String(init.headers['cookie'])).toContain('D1N=waf-cookie')
+    // SOAR authenticates the exchange with the session token as a Bearer AND
+    // the same token inside the `token` cookie.
+    expect(String(init.headers['authorization'])).toBe('Bearer SESS-TOKEN')
+    expect(String(init.headers['cookie'])).toMatch(/token=\{[^}]*SESS-TOKEN/)
   })
 
   it('honours tenant and soarClientId overrides', async () => {

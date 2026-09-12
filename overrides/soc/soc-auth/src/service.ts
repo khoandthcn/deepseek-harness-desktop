@@ -75,7 +75,7 @@ export class SocAuthService {
   private socToken: string | null = null
   /** The WSO2 SSO login jar: `commonAuthId`, `D1N`. Seeds each per-system authorize. */
   private cookies: Record<string, string> = {}
-  /** The SOAR per-system jar: `token`, `D1N`, `JSESSIONID`. Sent on SOAR API calls. */
+  /** The SOAR per-system jar: `token`, `D1N`. Sent on SOAR API calls. */
   private soarCookies: Record<string, string> = {}
 
   /** SOAR bearer cache. */
@@ -190,7 +190,9 @@ export class SocAuthService {
    * same way here. The value is never logged.
    * @returns the cookie jar to send on SOAR requests: `token` plus the WAF `D1N`.
    */
-  private async acquireSoarSession(doFetch: FetchLike): Promise<Record<string, string>> {
+  private async acquireSoarSession(
+    doFetch: FetchLike,
+  ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
     const { code, cookies } = await establishAppSession({
       iamUrl: this.iamUrl,
       clientId: this.soarClientId,
@@ -232,13 +234,14 @@ export class SocAuthService {
     }
     const jar: Record<string, string> = { token: JSON.stringify(tokenValue) }
     if (cookies.D1N !== undefined) jar.D1N = cookies.D1N
-    return jar
+    return { cookies: jar, sessionToken }
   }
 
   private async exchangeSoarBearer(): Promise<string> {
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     // SOAR runs its own OIDC authorize on top of the SSO login.
-    this.soarCookies = await this.acquireSoarSession(doFetch)
+    const session = await this.acquireSoarSession(doFetch)
+    this.soarCookies = session.cookies
     const url = `${this.soarBaseUrl}/access_control/access`
     let res: Response
     try {
@@ -246,6 +249,9 @@ export class SocAuthService {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          // SOAR authenticates the exchange with BOTH the session token as a
+          // Bearer and the same token inside the `token` cookie.
+          authorization: `Bearer ${session.sessionToken}`,
           cookie: this.cookieHeader(),
         },
         body: JSON.stringify({
