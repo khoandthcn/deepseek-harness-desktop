@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { parseSessionDataKey, runWso2Login } from '../src/wso2.ts'
+import { establishAppSession, parseSessionDataKey, runWso2Login } from '../src/wso2.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
  * positional args the stubs do not declare, so narrow once here. */
@@ -201,5 +201,50 @@ describe('runWso2Login behind the WAF', () => {
     await runWso2Login({ ...baseOpts, fetchImpl: f as any, onCookies: c => { jar = c } })
     expect(jar['D1N']).toBe('df48dc607bd140bd08329c75679ce2e6')
     expect(jar['commonAuthId']).toBe('abc123')
+  })
+})
+
+describe('establishAppSession', () => {
+  const SOAR = 'https://soar.example'
+  const CALLBACK = `${SOAR}/callback`
+
+  it('rides the SSO cookie to the system callback and returns the token it sets', async () => {
+    const f = sequenceFetch([
+      // authorize, SSO active: straight to the system callback, no login form
+      redirect(`${CALLBACK}?code=APPCODE`),
+      // the callback sets the session cookie the system keys on
+      redirect(`${SOAR}/`, 'token=soar-session; Path=/'),
+      // app root: a non-redirect ends the chain
+      new Response('ok', { status: 200 }),
+    ])
+    const jar = await establishAppSession({
+      iamUrl: IAM,
+      clientId: 'SOAR_CLIENT',
+      redirectUri: CALLBACK,
+      cookies: { commonAuthId: 'abc123', D1N: 'waf' },
+      fetchImpl: f as any,
+    })
+    expect(jar['token']).toBe('soar-session')
+    expect(jar['commonAuthId']).toBe('abc123')
+    // the SSO cookie was carried on the very first authorize
+    expect(String(callsOf(f)[0]![1].headers['cookie'])).toContain('commonAuthId=abc123')
+    // the first hop is the system authorize with its own client and callback
+    const authorize = new URL(String(callsOf(f)[0]![0]))
+    expect(authorize.searchParams.get('client_id')).toBe('SOAR_CLIENT')
+    expect(authorize.searchParams.get('redirect_uri')).toBe(CALLBACK)
+  })
+
+  it('fails with a re-login message when the SSO session has lapsed', async () => {
+    // No SSO: authorize bounces back to the login form.
+    const f = sequenceFetch([
+      redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K1`),
+    ])
+    await expect(establishAppSession({
+      iamUrl: IAM,
+      clientId: 'SOAR_CLIENT',
+      redirectUri: CALLBACK,
+      cookies: {},
+      fetchImpl: f as any,
+    })).rejects.toThrow(/SSO session has expired|log in again/i)
   })
 })

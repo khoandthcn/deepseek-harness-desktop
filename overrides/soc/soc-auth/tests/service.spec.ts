@@ -45,17 +45,38 @@ function wso2HappyPath(): Response[] {
 }
 
 /**
- * A fetch stub that replays the WSO2 sequence for IAM urls and a caller-supplied
- * queue of responses for SOAR `/access_control/access` calls.
+ * A fetch stub with three routes:
+ *  - the WSO2 login sequence, for IAM authorize/commonauth without an SSO cookie;
+ *  - the per-system OIDC handshake — the IAM authorize that carries `commonAuthId`
+ *    and the SOAR `/callback` that sets the `token` cookie — canned by URL so it
+ *    serves every exchange;
+ *  - a caller-supplied queue for the `/access_control/access` calls themselves.
  */
-function stubFetch(soarResponses: Response[], wso2: Response[] = wso2HappyPath()) {
+function stubFetch(accessResponses: Response[], wso2: Response[] = wso2HappyPath()) {
   let iam = 0
-  let soar = 0
-  const fn = vi.fn(async (url: string) => {
-    if (String(url).startsWith(SOAR)) {
-      const res = soarResponses[soar++]
-      if (!res) throw new Error('unexpected extra SOAR fetch call')
+  let access = 0
+  const cookieOf = (init: any): string => String(init?.headers?.cookie ?? '')
+  const fn = vi.fn(async (url: string, init?: any) => {
+    const u = String(url)
+    if (u.includes('/access_control/access')) {
+      const res = accessResponses[access++]
+      if (!res) throw new Error('unexpected extra SOAR access call')
       return res
+    }
+    // per-system callback: sets the session cookie the exchange keys on
+    if (u.startsWith(SOAR) && u.includes('/callback')) {
+      return redirect(`${SOAR}/`, 'token=soar-session; Path=/')
+    }
+    // the app root the callback redirects to: a non-redirect ends the chain
+    if (u.startsWith(SOAR)) {
+      return html(200, 'app root')
+    }
+    // per-system authorize: recognised by the SSO cookie the login left behind
+    // The per-system authorize carries a redirect_uri and rides the SSO cookie;
+    // login's own step-4 authorize carries only a sessionDataKey.
+    if (u.startsWith(`${IAM}/oauth2/authorize`) && u.includes('redirect_uri=')
+      && cookieOf(init).includes('commonAuthId')) {
+      return redirect(`${SOAR}/callback?code=APPCODE`)
     }
     const res = wso2[iam++]
     if (!res) throw new Error('unexpected extra WSO2 fetch call')
@@ -64,8 +85,9 @@ function stubFetch(soarResponses: Response[], wso2: Response[] = wso2HappyPath()
   return fn
 }
 
-function soarCalls(f: ReturnType<typeof stubFetch>) {
-  return callsOf(f).filter((c) => String(c[0]).startsWith(SOAR))
+/** The `/access_control/access` calls alone — the Bearer exchanges. */
+function accessCalls(f: ReturnType<typeof stubFetch>) {
+  return callsOf(f).filter((c) => String(c[0]).includes('/access_control/access'))
 }
 
 function makeService(
@@ -135,9 +157,9 @@ describe('SocAuthService.soarBearer', () => {
 
     expect(await svc.soarBearer()).toBe('SOAR-1')
     expect(await svc.soarBearer()).toBe('SOAR-1')
-    expect(soarCalls(f)).toHaveLength(1)
+    expect(accessCalls(f)).toHaveLength(1)
 
-    const [url, init] = soarCalls(f)[0] as [string, any]
+    const [url, init] = accessCalls(f)[0] as [string, any]
     expect(url).toBe(`${SOAR}/access_control/access`)
     expect(init.method).toBe('POST')
     expect(String(init.headers['content-type'])).toMatch(/application\/json/)
@@ -155,7 +177,7 @@ describe('SocAuthService.soarBearer', () => {
     await svc.login(OTP)
     await svc.soarBearer()
 
-    const init = (soarCalls(f)[0] as [string, any])[1]
+    const init = (accessCalls(f)[0] as [string, any])[1]
     expect(JSON.parse(init.body)).toEqual({ tenant: 'VCS', client_id: 'OTHER', scopes: '' })
   })
 
@@ -173,29 +195,31 @@ describe('SocAuthService.soarBearer', () => {
     // Just inside the skew window: still cached.
     clock += (3600 - 61) * 1000
     expect(await svc.soarBearer()).toBe('SOAR-1')
-    expect(soarCalls(f)).toHaveLength(1)
+    expect(accessCalls(f)).toHaveLength(1)
 
     // Past `expires_in - 60s`: a fresh exchange.
     clock += 2000
     expect(await svc.soarBearer()).toBe('SOAR-2')
-    expect(soarCalls(f)).toHaveLength(2)
+    expect(accessCalls(f)).toHaveLength(2)
   })
 
-  it('rejects with a session-expired error on 401', async () => {
+  it('reports a SOAR rejection, naming the cookies sent, on 401', async () => {
     const svc = makeService(stubFetch([json(401, { message: 'unauthorized' })]))
     await svc.login(OTP)
 
     const err = await expectNoSecrets(svc.soarBearer())
-    expect(err.message).toMatch(/session expired|expired/i)
+    expect(err.message).toMatch(/SOAR rejected the SOC session/i)
     expect(err.message).toContain('401')
+    expect(err.message).toContain('cookies sent: [')
     expect(svc.isAuthenticated()).toBe(false)
   })
 
-  it('rejects with a session-expired error on 403', async () => {
+  it('reports a SOAR rejection, naming the cookies sent, on 403', async () => {
     const svc = makeService(stubFetch([json(403, {})]))
     await svc.login(OTP)
     const err = await expectNoSecrets(svc.soarBearer())
-    expect(err.message).toMatch(/expired/i)
+    expect(err.message).toMatch(/SOAR rejected the SOC session/i)
+    expect(err.message).toContain('403')
   })
 
   it('rejects with a malformed/WAF error on a non-JSON response', async () => {

@@ -113,6 +113,91 @@ function readSetCookies(res: Response): string[] {
   return single ? [single] : []
 }
 
+export interface AppSessionOptions {
+  /** WSO2 IAM base URL. */
+  iamUrl: string
+  /** This system's registered OIDC client id (SOAR uses `SOAR_CLIENT`). */
+  clientId: string
+  /** This system's callback URL (SOAR: `https://soar.../callback`). */
+  redirectUri: string
+  /** Cookies from a completed WSO2 login: the SSO session (`commonAuthId`) and `D1N`. */
+  cookies: Record<string, string>
+  /** OAuth scope; defaults to `openid`. */
+  scope?: string | undefined
+  fetchImpl?: FetchLike | undefined
+}
+
+/**
+ * Obtain a per-system session on top of an existing WSO2 SSO login.
+ *
+ * Each SOC system (SOAR, SIEM, EDR, NSM) has its own OIDC client and callback.
+ * Because the WSO2 login already set the SSO cookie (`commonAuthId`), the
+ * system's authorize skips the username/password/OTP form and redirects
+ * straight to its callback, which sets the cookie the system's API keys on
+ * (SOAR: `token`). This follows that redirect chain — carrying and collecting
+ * cookies, adopting the WAF `D1N` bootstrap if it appears — and returns the jar.
+ *
+ * @returns every cookie collected across the handshake, for the caller to send
+ *   on its API requests.
+ * @throws when the chain lands back on the login form: the SSO session is gone,
+ *   so a fresh {@link runWso2Login} (a new OTP) is required.
+ */
+export async function establishAppSession(opts: AppSessionOptions): Promise<Record<string, string>> {
+  const doFetch: FetchLike = opts.fetchImpl ?? ((input, init) => fetch(input, init))
+  const iam = opts.iamUrl.replace(/\/+$/, '')
+  const jar = new CookieJar()
+  for (const [name, value] of Object.entries(opts.cookies)) jar.set(name, value)
+
+  const request = async (url: string, afterBootstrap = false): Promise<Response> => {
+    const headers: Record<string, string> = {}
+    const cookie = jar.header()
+    if (cookie) headers['cookie'] = cookie
+    let res: Response
+    try {
+      res = await doFetch(url, { headers, redirect: 'manual' })
+    } catch (cause) {
+      throw new SocAuthError(
+        `SOC auth: the ${opts.clientId} authorize request to ${redactUrl(url)} failed (network error).`,
+        { cause },
+      )
+    }
+    jar.absorb(res)
+    if (!afterBootstrap && res.status === 200) {
+      const d1n = parseD1nBootstrap(await res.clone().text())
+      if (d1n !== undefined) {
+        jar.set(D1N_COOKIE, d1n)
+        return request(url, true)
+      }
+    }
+    return res
+  }
+
+  let next: string | null = `${iam}/oauth2/authorize?${new URLSearchParams({
+    response_type: 'code',
+    client_id: opts.clientId,
+    redirect_uri: opts.redirectUri,
+    scope: opts.scope ?? 'openid',
+  }).toString()}`
+
+  // authorize → system callback → app root: a short chain. Cap the hops so a
+  // misconfiguration surfaces as an error rather than an infinite loop.
+  for (let hop = 0; hop < 8 && next; hop++) {
+    const res = await request(next)
+    if (!REDIRECT_STATUSES.has(res.status)) break
+    const location = res.headers.get('location')
+    if (!location) break
+    const abs = new URL(location, `${iam}/`).toString()
+    if (/login\.do|sessionDataKey/.test(abs)) {
+      throw new SocAuthError(
+        'SOC auth: the WSO2 SSO session has expired — log in again with a new OTP.',
+      )
+    }
+    next = abs
+  }
+
+  return jar.snapshot()
+}
+
 export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginResult> {
   const doFetch: FetchLike = opts.fetchImpl ?? ((input, init) => fetch(input, init))
   const iam = opts.iamUrl.replace(/\/+$/, '')

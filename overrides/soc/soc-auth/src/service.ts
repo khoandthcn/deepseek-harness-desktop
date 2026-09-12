@@ -17,7 +17,7 @@
  * thrown message.
  */
 
-import { runWso2Login, SocAuthError, type FetchLike } from './wso2.ts'
+import { establishAppSession, runWso2Login, SocAuthError, type FetchLike } from './wso2.ts'
 
 /** Refresh a little before the real expiry, so an in-flight call cannot race it. */
 const REFRESH_SKEW_MS = 60_000
@@ -34,8 +34,10 @@ export interface SocAuthServiceOptions {
   soarBaseUrl: string
   /** SOAR tenant; `MASTER` unless the deployment says otherwise. */
   tenant?: string | undefined
-  /** SOAR OAuth client id used by the access exchange. */
+  /** SOAR OAuth client id used by its authorize. Defaults to `SOAR_CLIENT`. */
   soarClientId?: string | undefined
+  /** SOAR OIDC callback URL. Defaults to `${soarBaseUrl}/callback`. */
+  soarRedirectUri?: string | undefined
   /**
    * Supplies the login credentials when a login actually runs. A callback,
    * not two strings: the credentials seam is asynchronous, and the secret
@@ -61,13 +63,17 @@ export class SocAuthService {
   /** SOAR tenant, defaulted at construction. Public for the same reason. */
   readonly tenant: string
   private readonly soarClientId: string
+  private readonly soarRedirectUri: string
   private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
 
   /** SOC session state, set by `login()` and cleared when it is invalidated. */
   private socToken: string | null = null
+  /** The WSO2 SSO login jar: `commonAuthId`, `D1N`. Seeds each per-system authorize. */
   private cookies: Record<string, string> = {}
+  /** The SOAR per-system jar: `token`, `D1N`, `JSESSIONID`. Sent on SOAR API calls. */
+  private soarCookies: Record<string, string> = {}
 
   /** SOAR bearer cache. */
   private soarToken: string | null = null
@@ -82,6 +88,7 @@ export class SocAuthService {
     this.soarBaseUrl = opts.soarBaseUrl.replace(/\/+$/, '')
     this.tenant = opts.tenant ?? 'MASTER'
     this.soarClientId = opts.soarClientId ?? 'SOAR_CLIENT'
+    this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
     this.now = opts.now ?? (() => Date.now())
@@ -120,6 +127,7 @@ export class SocAuthService {
   invalidate(): void {
     this.socToken = null
     this.cookies = {}
+    this.soarCookies = {}
     this.soarToken = null
     this.soarExpiresAt = 0
     this.inflight = null
@@ -157,14 +165,13 @@ export class SocAuthService {
     return headers
   }
 
-  /**
-   * The session cookies as a `Cookie` header. SOAR identifies the SOC session by
-   * a cookie named `token`; when WSO2 did not set one we supply the SOC access
-   * token under that name, matching the Python reference implementation.
-   */
+  /** The SOAR per-system cookies (`token`, `D1N`), set by the per-system authorize. */
+  private cookieJar(): Record<string, string> {
+    return { ...this.soarCookies }
+  }
+
   private cookieHeader(): string {
-    const jar: Record<string, string> = { ...this.cookies }
-    if (!jar.token && this.socToken) jar.token = this.socToken
+    const jar = this.cookieJar()
     return Object.entries(jar)
       .map(([k, v]) => `${k}=${v}`)
       .join('; ')
@@ -172,6 +179,15 @@ export class SocAuthService {
 
   private async exchangeSoarBearer(): Promise<string> {
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
+    // SOAR runs its own OIDC authorize on top of the SSO login; its callback
+    // sets the `token` cookie the access exchange keys on.
+    this.soarCookies = await establishAppSession({
+      iamUrl: this.iamUrl,
+      clientId: this.soarClientId,
+      redirectUri: this.soarRedirectUri,
+      cookies: this.cookies,
+      fetchImpl: this.fetchImpl,
+    })
     const url = `${this.soarBaseUrl}/access_control/access`
     let res: Response
     try {
@@ -195,10 +211,22 @@ export class SocAuthService {
     }
 
     if (res.status === 401 || res.status === 403) {
-      // The SOC session no longer authenticates: force a fresh login.
+      // SOAR did not accept what we sent as the SOC session. Say exactly what
+      // that was — cookie names, never values — and what SOAR answered, so a
+      // failed attempt reports rather than guesses. Then force a fresh login.
+      const held = Object.keys(this.cookieJar()).sort().join(', ') || 'none'
+      const detail = await res.text().then(text => {
+        try {
+          const body = JSON.parse(text)
+          return typeof body?.message === 'string' ? body.message : ''
+        } catch {
+          return ''
+        }
+      }).catch(() => '')
       this.invalidate()
       throw new SocAuthError(
-        `SOC auth: SOAR rejected the SOC session (HTTP ${res.status}) — the session expired, log in again with a new OTP.`,
+        `SOC auth: SOAR rejected the SOC session (HTTP ${res.status}${detail ? `: ${detail}` : ''}); `
+        + `cookies sent: [${held}]. Log in again with a new OTP.`,
       )
     }
 
