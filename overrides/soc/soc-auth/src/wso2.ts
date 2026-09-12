@@ -43,8 +43,10 @@ export interface Wso2LoginOptions {
 }
 
 export interface Wso2LoginResult {
+  /** The SOC access token from the portal exchange. */
   accessToken: string
-  expiresIn: number
+  /** Cookies collected across the flow: `commonAuthId`, `D1N`, and the portal's `token` when it set one. */
+  cookies: Record<string, string>
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
@@ -220,30 +222,43 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
     throw new SocAuthError('WSO2 login: the redirect back carried no authorization code.')
   }
 
-  // Step 5 — exchange the code for an access token.
-  const res5 = await request(
-    `${iam}/oauth2/token`,
-    form({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: opts.redirectUri,
-      client_id: opts.clientId,
-    }),
-  )
+  // Step 5 — hand the code to the SOC portal. The browser never calls
+  // /oauth2/token itself: the portal does, server-side, with a client secret we
+  // do not hold, and answers with the SOC access token. The session cookie SOAR
+  // keys on (`token`) rides the same response as Set-Cookie, into the jar.
+  const portal = opts.redirectUri.replace(/\/+$/, '')
+  const res5 = await request(`${portal}/authen-api/auth`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ clientId: opts.clientId, code }),
+  })
   if (res5.status !== 200) {
-    throw new SocAuthError(`WSO2 login: the token endpoint returned HTTP ${res5.status}.`)
+    throw new SocAuthError(
+      `WSO2 login: the portal code exchange (${portal}/authen-api/auth) returned HTTP ${res5.status}.`,
+    )
   }
   let payload: any
   try {
     payload = await res5.json()
   } catch (cause) {
-    throw new SocAuthError('WSO2 login: the token endpoint returned a non-JSON body.', { cause })
+    throw new SocAuthError('WSO2 login: the portal code exchange returned a non-JSON body.', { cause })
   }
-  const accessToken = payload?.access_token
+  const accessToken = payload?.accessToken
   if (typeof accessToken !== 'string' || accessToken.length === 0) {
-    throw new SocAuthError('WSO2 login: the token response contained no access_token.')
+    throw new SocAuthError(
+      `WSO2 login: the portal code exchange returned no accessToken (keys: ${Object.keys(payload ?? {}).join(', ') || 'none'}).`,
+    )
   }
-  const expiresIn = Number(payload?.expires_in ?? 3600)
-  opts.onCookies?.(jar.snapshot())
-  return { accessToken, expiresIn: Number.isFinite(expiresIn) ? expiresIn : 3600 }
+  const cookies = jar.snapshot()
+  if (cookies['token'] === undefined) {
+    // Not fatal here — SOAR may still accept the access token — but say so
+    // precisely, since this is the one step the capture could not show us.
+    console.warn(
+      `soc-auth: the portal code exchange set no "token" cookie; cookies held: [${Object.keys(cookies).join(', ')}]`,
+    )
+  }
+
+  const snapshot = jar.snapshot()
+  opts.onCookies?.(snapshot)
+  return { accessToken, cookies: snapshot }
 }

@@ -40,7 +40,7 @@ function wso2HappyPath(): Response[] {
     redirect(`${IAM}/authenticationendpoint/totp.do?client_id=cid&sessionDataKey=K2`),
     redirect(`${IAM}/oauth2/authorize?sessionDataKey=K3`),
     redirect(`${REDIRECT_URI}?code=CODE-123`, 'D1N=waf-cookie; Path=/'),
-    json(200, { access_token: 'SOC-TOKEN', expires_in: 1800, token_type: 'Bearer' }),
+    json(200, { accessToken: 'SOC-TOKEN', idToken: 'ID', item: {}, scopes: [] }),
   ]
 }
 

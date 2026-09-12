@@ -49,7 +49,8 @@ function happyPathResponses() {
     ),
     redirect(`${IAM}/oauth2/authorize?sessionDataKey=K3`),
     redirect(`${REDIRECT_URI}?code=CODE-123&session_state=xyz`),
-    json(200, { access_token: 'TOKEN-XYZ', expires_in: 1800, token_type: 'Bearer' }),
+    // the portal's own exchange, not /oauth2/token
+    json(200, { accessToken: 'TOKEN-XYZ', idToken: 'ID', item: { username: 'alice' }, scopes: [] }),
   ]
 }
 
@@ -87,7 +88,8 @@ describe('runWso2Login', () => {
     const f = sequenceFetch(happyPathResponses())
     const out = await runWso2Login({ ...baseOpts, fetchImpl: f as any })
 
-    expect(out).toEqual({ accessToken: 'TOKEN-XYZ', expiresIn: 1800 })
+    expect(out.accessToken).toBe('TOKEN-XYZ')
+    expect(out.cookies['commonAuthId']).toBe('abc123')
     expect(f).toHaveBeenCalledTimes(5)
 
     // Step 1: authorize
@@ -125,21 +127,21 @@ describe('runWso2Login', () => {
     // Step 4: follow the authorize redirect
     expect(String(callsOf(f)[3]![0])).toBe(`${IAM}/oauth2/authorize?sessionDataKey=K3`)
 
-    // Step 5: token exchange
-    const tokenCall = callsOf(f)[4] as any
-    expect(String(tokenCall[0])).toBe(`${IAM}/oauth2/token`)
-    const tokenBody = bodyOf(tokenCall)
-    expect(tokenBody.get('grant_type')).toBe('authorization_code')
-    expect(tokenBody.get('code')).toBe('CODE-123')
-    expect(tokenBody.get('redirect_uri')).toBe(REDIRECT_URI)
-    expect(tokenBody.get('client_id')).toBe('cid')
+    // Step 5: the SOC portal exchanges the code; the browser never touches /oauth2/token
+    const exchangeCall = callsOf(f)[4] as any
+    expect(String(exchangeCall[0])).toBe(`${REDIRECT_URI}/authen-api/auth`)
+    expect(exchangeCall[1].method).toBe('POST')
+    expect(String(exchangeCall[1].headers['content-type'])).toMatch(/application\/json/)
+    expect(JSON.parse(exchangeCall[1].body)).toEqual({ clientId: 'cid', code: 'CODE-123' })
+    // the session cookies collected so far ride along to the portal
+    expect(String(exchangeCall[1].headers['cookie'])).toContain('commonAuthId=abc123')
   })
 
-  it('defaults expiresIn to 3600 when the token response omits it', async () => {
-    const rs = happyPathResponses()
-    rs[4] = json(200, { access_token: 'T' })
-    const out = await runWso2Login({ ...baseOpts, fetchImpl: sequenceFetch(rs) as any })
-    expect(out.expiresIn).toBe(3600)
+  it('names the keys it got when the portal exchange carries no accessToken', async () => {
+    const responses = happyPathResponses()
+    responses[4] = json(200, { item: {}, scopes: [] })
+    const f = sequenceFetch(responses)
+    await expect(runWso2Login({ ...baseOpts, fetchImpl: f as any })).rejects.toThrow(/no accessToken \(keys: item, scopes\)/)
   })
 
   it('rejects when the password step does not reach the OTP step', async () => {
@@ -167,12 +169,12 @@ describe('runWso2Login', () => {
     ).rejects.toThrow(/authorization code/i)
   })
 
-  it('rejects when the token response has no access_token', async () => {
+  it('rejects when the portal exchange has no accessToken', async () => {
     const rs = happyPathResponses()
     rs[4] = json(200, { error: 'invalid_grant' })
     await expect(
       runWso2Login({ ...baseOpts, fetchImpl: sequenceFetch(rs) as any }),
-    ).rejects.toThrow(/access_token/i)
+    ).rejects.toThrow(/no accessToken/)
   })
 })
 
