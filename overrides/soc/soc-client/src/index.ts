@@ -7,6 +7,8 @@ import {
 } from './errors.ts'
 
 export * from './errors.ts'
+export * from './d1n.ts'
+import { parseD1nBootstrap } from './d1n.ts'
 
 export interface SocHttpOptions {
   /** Injectable fetch implementation (defaults to the global `fetch`). */
@@ -28,7 +30,8 @@ export class SocHttp {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly authHeaders?: (() => Record<string, string>) | undefined
-  private readonly d1nCookie?: string | undefined
+  /** Mutable: the WAF may hand it to us mid-flight, see `d1n.ts`. */
+  private d1nCookie?: string | undefined
 
   constructor(baseUrl: string, opts: SocHttpOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
@@ -55,7 +58,7 @@ export class SocHttp {
     return headers
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, afterBootstrap = false): Promise<T> {
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`
     const hasBody = body !== undefined
     const init: RequestInit & { headers: Record<string, string>; body?: string } = {
@@ -72,6 +75,14 @@ export class SocHttp {
     }
 
     const text = await res.text()
+
+    // Not the response we asked for but the WAF's cookie bootstrap: adopt the
+    // cookie and reissue, once. A second bootstrap means the cookie was refused.
+    const d1n = parseD1nBootstrap(text)
+    if (d1n !== undefined && !afterBootstrap) {
+      this.d1nCookie = d1n
+      return this.request<T>(method, path, body, true)
+    }
 
     if (!res.ok) {
       const parsed = safeJson(text)

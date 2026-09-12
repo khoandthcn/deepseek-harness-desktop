@@ -22,6 +22,10 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "paths": {
+      "@deepseek-ai/dsh-soc-client": ["./overrides/soc/soc-client/src"],
+      "@deepseek-ai/dsh-soc-auth": ["./overrides/soc/soc-auth/src"]
+    }
   }
 }

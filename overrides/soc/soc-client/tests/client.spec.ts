@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { SocHttp } from '../src/index.ts'
+import { SocHttp, parseD1nBootstrap } from '../src/index.ts'
 import { SocAuthError, SocMalformedError, SocNotFoundError } from '../src/errors.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
@@ -32,5 +32,41 @@ describe('SocHttp', () => {
   it('maps 404 to SocNotFoundError', async () => {
     const http = new SocHttp('https://x', { fetchImpl: stubFetch(404, '{}') })
     await expect(http.getJson('/x')).rejects.toBeInstanceOf(SocNotFoundError)
+  })
+})
+
+const WAF_BOOTSTRAP_PAGE = '<html><body><script>document.cookie="D1N=df48dc607bd140bd08329c75679ce2e6"+"; expires=Fri, 31 Dec 2099 23:59:59 GMT; path=/";window.location.reload(true);</script></body></html>'
+
+describe('parseD1nBootstrap', () => {
+  it('reads the cookie value out of the WAF bootstrap page', () => {
+    expect(parseD1nBootstrap(WAF_BOOTSTRAP_PAGE)).toBe('df48dc607bd140bd08329c75679ce2e6')
+  })
+  it('ignores ordinary bodies', () => {
+    expect(parseD1nBootstrap('{"ok":true}')).toBeUndefined()
+    expect(parseD1nBootstrap('<html>D1N=abc</html>')).toBeUndefined()
+  })
+})
+
+describe('SocHttp against the WAF bootstrap', () => {
+  it('adopts the cookie and reissues the request once', async () => {
+    const pages = [
+      new Response(WAF_BOOTSTRAP_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+      new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    ]
+    const f = vi.fn(async () => pages.shift()!)
+    const http = new SocHttp('https://soar.example', { fetchImpl: f })
+    expect(await http.postJson('/x', {})).toEqual({ ok: true })
+    expect(f).toHaveBeenCalledTimes(2)
+    const [first, second] = callsOf(f)
+    expect(first![0]).toBe(second![0])
+    expect(first![1].headers['cookie']).toBeUndefined()
+    expect(second![1].headers['cookie']).toBe('D1N=df48dc607bd140bd08329c75679ce2e6')
+  })
+
+  it('does not loop when the bootstrap page comes back a second time', async () => {
+    const f = vi.fn(async () => new Response(WAF_BOOTSTRAP_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }))
+    const http = new SocHttp('https://soar.example', { fetchImpl: f })
+    await expect(http.getJson('/x')).rejects.toThrow(/non-JSON/)
+    expect(f).toHaveBeenCalledTimes(2)
   })
 })

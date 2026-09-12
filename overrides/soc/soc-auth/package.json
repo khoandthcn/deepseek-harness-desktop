@@ -32,5 +32,8 @@
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-launch-environment": "workspace:^"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-soc-client": "workspace:^"
   }
 }

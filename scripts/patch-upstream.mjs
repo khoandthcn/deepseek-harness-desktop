@@ -239,6 +239,7 @@ const SOC_PACKAGE_REFERENCES = {
     '../../../vendor/cordis',
     '../../credentials/credentials',
     '../../util/launch-environment',
+    '../soc-client',
   ],
   'tool-soc-soar': [
     '../../../vendor/cosmokit',

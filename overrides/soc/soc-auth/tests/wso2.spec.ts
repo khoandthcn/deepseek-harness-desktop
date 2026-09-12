@@ -32,6 +32,12 @@ function sequenceFetch(responses: Response[]) {
   })
 }
 
+const WAF_BOOTSTRAP_PAGE = '<html><body><script>document.cookie="D1N=df48dc607bd140bd08329c75679ce2e6"+"; expires=Fri, 31 Dec 2099 23:59:59 GMT; path=/";window.location.reload(true);</script></body></html>'
+
+function html(body: string) {
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8,gbk' } })
+}
+
 function happyPathResponses() {
   return [
     redirect(
@@ -167,5 +173,31 @@ describe('runWso2Login', () => {
     await expect(
       runWso2Login({ ...baseOpts, fetchImpl: sequenceFetch(rs) as any }),
     ).rejects.toThrow(/access_token/i)
+  })
+})
+
+describe('runWso2Login behind the WAF', () => {
+  it('adopts the D1N cookie from the bootstrap page and repeats the authorize step', async () => {
+    // What the real IAM returns to a client that has no D1N cookie yet: not the
+    // login redirect, but a page that sets the cookie via script and reloads.
+    const f = sequenceFetch([html(WAF_BOOTSTRAP_PAGE), ...happyPathResponses()])
+    const out = await runWso2Login({ ...baseOpts, fetchImpl: f as any })
+
+    expect(out.accessToken).toBe('TOKEN-XYZ')
+    expect(f).toHaveBeenCalledTimes(6)
+    const calls = callsOf(f)
+    expect(String(calls[1]![0])).toBe(String(calls[0]![0]))
+    expect(calls[0]![1].headers['cookie']).toBeUndefined()
+    expect(String(calls[1]![1].headers['cookie'])).toContain('D1N=df48dc607bd140bd08329c75679ce2e6')
+    // and the cookie rides every later step, which is what the WAF gates on
+    expect(String(calls[2]![1].headers['cookie'])).toContain('D1N=')
+  })
+
+  it('hands the D1N cookie to the caller with the rest of the jar', async () => {
+    const f = sequenceFetch([html(WAF_BOOTSTRAP_PAGE), ...happyPathResponses()])
+    let jar: Record<string, string> = {}
+    await runWso2Login({ ...baseOpts, fetchImpl: f as any, onCookies: c => { jar = c } })
+    expect(jar['D1N']).toBe('df48dc607bd140bd08329c75679ce2e6')
+    expect(jar['commonAuthId']).toBe('abc123')
   })
 })

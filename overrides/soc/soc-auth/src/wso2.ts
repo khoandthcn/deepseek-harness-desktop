@@ -19,6 +19,8 @@ export class SocAuthError extends Error {
 
 export type FetchLike = (input: string, init?: any) => Promise<Response>
 
+import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
+
 export interface Wso2LoginOptions {
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
   iamUrl: string
@@ -78,6 +80,10 @@ function redactUrl(location: string): string {
 class CookieJar {
   private readonly jar = new Map<string, string>()
 
+  set(name: string, value: string): void {
+    this.jar.set(name, value)
+  }
+
   absorb(res: Response): void {
     for (const raw of readSetCookies(res)) {
       const pair = raw.split(';', 1)[0]?.trim()
@@ -110,7 +116,11 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
   const iam = opts.iamUrl.replace(/\/+$/, '')
   const jar = new CookieJar()
 
-  const request = async (url: string, init: Record<string, any> = {}): Promise<Response> => {
+  const request = async (
+    url: string,
+    init: Record<string, any> = {},
+    afterBootstrap = false,
+  ): Promise<Response> => {
     const headers: Record<string, string> = { ...(init.headers ?? {}) }
     const cookie = jar.header()
     if (cookie) headers['cookie'] = cookie
@@ -124,6 +134,16 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
       )
     }
     jar.absorb(res)
+    // The WAF answers a cookie-less client with a page that sets `D1N` via
+    // script and reloads. Peek at a clone so the caller still gets the body;
+    // adopt the cookie and reissue this same request, once.
+    if (!afterBootstrap && res.status === 200) {
+      const d1n = parseD1nBootstrap(await res.clone().text())
+      if (d1n !== undefined) {
+        jar.set(D1N_COOKIE, d1n)
+        return request(url, init, true)
+      }
+    }
     return res
   }
 
