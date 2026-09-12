@@ -38,8 +38,8 @@ export interface SoarAdapterLike {
 export interface SocAuthLike {
   isAuthenticated(): boolean
   login(otp: string): Promise<void>
-  soarBearer(): Promise<string>
-  authHeadersForSoar(): Record<string, string>
+  soarBearer(scope: string): Promise<string>
+  authHeadersForSoar(scope: string): Record<string, string>
   invalidate(): void
 }
 

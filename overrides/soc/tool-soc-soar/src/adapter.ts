@@ -20,9 +20,19 @@ import { buildAlertQuery } from './query.ts'
 
 /** The slice of soc-client's `SocHttp` this adapter needs. */
 export interface SoarHttp {
-  postJson<T = unknown>(path: string, body: unknown): Promise<T>
-  getJson<T = unknown>(path: string): Promise<T>
+  /** @param scope - the SOAR scope this endpoint requires; the client mints a Bearer for it. */
+  postJson<T = unknown>(path: string, body: unknown, scope: string): Promise<T>
+  getJson<T = unknown>(path: string, scope: string): Promise<T>
 }
+
+/** SOAR scope required by each endpoint, read from the SOAR SPA's route map. */
+export const SOAR_SCOPES = {
+  alertSearch: 'read:alert',
+  alertTypes: 'read:alert_types',
+  alertFields: 'read:alert_field',
+  ticketSearch: 'read:ticket',
+  notifications: 'read:notification',
+} as const
 
 export interface SearchAlertsOptions {
   severity?: string | null | undefined
@@ -79,21 +89,21 @@ export class SoarAdapter {
         rawQuery: options.rawQuery,
       }),
     }
-    const data = await this.http.postJson(`${this.base()}/alert/_search`, body)
+    const data = await this.http.postJson(`${this.base()}/alert/_search`, body, SOAR_SCOPES.alertSearch)
     return parseSearchEnvelope<Alert>(data)
   }
 
   async listAlertTypes(options: PageOptions = {}): Promise<SearchEnvelope<AlertType>> {
     const { page = 0, size = 100 } = options
     const body = { _from: page * size, _size: size, _counting: true }
-    const data = await this.http.postJson(`${this.base()}/alert_type/_search`, body)
+    const data = await this.http.postJson(`${this.base()}/alert_type/_search`, body, SOAR_SCOPES.alertTypes)
     return parseSearchEnvelope<AlertType>(data)
   }
 
   async listAlertFields(options: PageOptions = {}): Promise<SearchEnvelope<AlertField>> {
     const { page = 0, size = 500 } = options
     const body = { _from: page * size, _size: size, _sort: 'name', _counting: true, query: '' }
-    const data = await this.http.postJson(`${this.base()}/alert_field/_search`, body)
+    const data = await this.http.postJson(`${this.base()}/alert_field/_search`, body, SOAR_SCOPES.alertFields)
     return parseSearchEnvelope<AlertField>(data)
   }
 
@@ -107,7 +117,7 @@ export class SoarAdapter {
       _fields: '',
       query: options.rawQuery || '',
     }
-    const data = await this.http.postJson(`${this.base()}/ticket/_search`, body)
+    const data = await this.http.postJson(`${this.base()}/ticket/_search`, body, SOAR_SCOPES.ticketSearch)
     return parseSearchEnvelope<Ticket>(data)
   }
 
@@ -120,7 +130,7 @@ export class SoarAdapter {
       _counting: 'true',
       _only_unread: String(onlyUnread),
     })
-    const data = await this.http.getJson(`/notification/v1/notification?${params.toString()}`)
+    const data = await this.http.getJson(`/notification/v1/notification?${params.toString()}`, SOAR_SCOPES.notifications)
     return parseNotificationList(data)
   }
 }

@@ -78,11 +78,13 @@ export class SocAuthService {
   /** The SOAR per-system jar: `token`, `D1N`. Sent on SOAR API calls. */
   private soarCookies: Record<string, string> = {}
 
-  /** SOAR bearer cache. */
-  private soarToken: string | null = null
-  private soarExpiresAt = 0
-  /** De-duplicates concurrent `soarBearer()` calls into one exchange. */
-  private inflight: Promise<string> | null = null
+  /** The SOAR session (cookies + session token), acquired once, reused for every scope. */
+  private soarSession: { cookies: Record<string, string>, sessionToken: string } | null = null
+  private sessionInflight: Promise<{ cookies: Record<string, string>, sessionToken: string }> | null = null
+  /** SOAR Bearer cache, keyed by scope: the access exchange mints one Bearer per scope. */
+  private readonly soarBearers = new Map<string, { token: string, exp: number }>()
+  /** De-duplicates concurrent exchanges for the same scope. */
+  private readonly bearerInflight = new Map<string, Promise<string>>()
 
   constructor(opts: SocAuthServiceOptions) {
     this.iamUrl = opts.iamUrl.replace(/\/+$/, '')
@@ -132,39 +134,46 @@ export class SocAuthService {
     this.socToken = null
     this.cookies = {}
     this.soarCookies = {}
-    this.soarToken = null
-    this.soarExpiresAt = 0
-    this.inflight = null
+    this.soarSession = null
+    this.sessionInflight = null
+    this.soarBearers.clear()
+    this.bearerInflight.clear()
   }
 
   /**
-   * The SOAR Bearer for this session, exchanged lazily and cached until
-   * `expires_in` (minus a 60s skew).
+   * The SOAR Bearer for one scope, exchanged lazily and cached per scope until
+   * `expires_in` (minus a 60s skew). SOAR mints a Bearer per scope, so each API
+   * family (`read:alert`, `read:ticket`, …) needs its own.
+   * @param scope - the scope the target endpoint requires.
    */
-  async soarBearer(): Promise<string> {
+  async soarBearer(scope: string): Promise<string> {
     if (!this.isAuthenticated()) {
       throw new SocAuthError(
         'SOC auth: not logged in — ask the user for their current OTP and call soc_login first.',
       )
     }
-    if (this.soarToken && this.now() < this.soarExpiresAt - REFRESH_SKEW_MS) {
-      return this.soarToken
+    const cached = this.soarBearers.get(scope)
+    if (cached && this.now() < cached.exp - REFRESH_SKEW_MS) {
+      return cached.token
     }
-    if (!this.inflight) {
-      this.inflight = this.exchangeSoarBearer().finally(() => {
-        this.inflight = null
+    let inflight = this.bearerInflight.get(scope)
+    if (!inflight) {
+      inflight = this.exchangeSoarBearer(scope).finally(() => {
+        this.bearerInflight.delete(scope)
       })
+      this.bearerInflight.set(scope, inflight)
     }
-    return this.inflight
+    return inflight
   }
 
   /**
    * Headers for a SOAR request: the cached Bearer (when one has been fetched)
    * plus the session cookies, including the WAF `D1N` cookie when present.
    */
-  authHeadersForSoar(): Record<string, string> {
+  authHeadersForSoar(scope: string): Record<string, string> {
     const headers: Record<string, string> = {}
-    if (this.soarToken) headers.Authorization = `Bearer ${this.soarToken}`
+    const bearer = this.soarBearers.get(scope)
+    if (bearer) headers.Authorization = `Bearer ${bearer.token}`
     headers.Cookie = this.cookieHeader()
     return headers
   }
@@ -190,6 +199,23 @@ export class SocAuthService {
    * same way here. The value is never logged.
    * @returns the cookie jar to send on SOAR requests: `token` plus the WAF `D1N`.
    */
+  /** Acquire the SOAR session once and reuse it for every scope exchange. */
+  private async ensureSoarSession(
+    doFetch: FetchLike,
+  ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
+    if (this.soarSession) return this.soarSession
+    if (!this.sessionInflight) {
+      this.sessionInflight = this.acquireSoarSession(doFetch)
+        .then((session) => {
+          this.soarSession = session
+          this.soarCookies = session.cookies
+          return session
+        })
+        .finally(() => { this.sessionInflight = null })
+    }
+    return this.sessionInflight
+  }
+
   private async acquireSoarSession(
     doFetch: FetchLike,
   ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
@@ -237,11 +263,11 @@ export class SocAuthService {
     return { cookies: jar, sessionToken }
   }
 
-  private async exchangeSoarBearer(): Promise<string> {
+  private async exchangeSoarBearer(scope: string): Promise<string> {
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
-    // SOAR runs its own OIDC authorize on top of the SSO login.
-    const session = await this.acquireSoarSession(doFetch)
-    this.soarCookies = session.cookies
+    // SOAR runs its own OIDC authorize on top of the SSO login; the session is
+    // scope-independent, so it is acquired once and reused across scopes.
+    const session = await this.ensureSoarSession(doFetch)
     const url = `${this.soarBaseUrl}/access_control/access`
     let res: Response
     try {
@@ -257,7 +283,7 @@ export class SocAuthService {
         body: JSON.stringify({
           tenant: this.tenant,
           client_id: this.soarClientId,
-          scopes: '',
+          scopes: scope,
         }),
       })
     } catch (cause) {
@@ -305,8 +331,10 @@ export class SocAuthService {
     }
 
     const expiresIn = Number(payload?.expires_in ?? 3600)
-    this.soarToken = token
-    this.soarExpiresAt = this.now() + (Number.isFinite(expiresIn) ? expiresIn : 3600) * 1000
+    this.soarBearers.set(scope, {
+      token,
+      exp: this.now() + (Number.isFinite(expiresIn) ? expiresIn : 3600) * 1000,
+    })
     return token
   }
 }

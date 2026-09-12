@@ -12,6 +12,7 @@ const SOAR = 'https://soar.example'
 
 const PASSWORD = 'sup3rs3cret'
 const OTP = '123456'
+const SCOPE = 'read:alert'
 
 function redirect(location: string, setCookie?: string) {
   const headers = new Headers({ location })
@@ -142,7 +143,7 @@ describe('SocAuthService.login', () => {
 describe('SocAuthService.soarBearer', () => {
   it('rejects with a clear error before any login', async () => {
     const svc = makeService(stubFetch([]))
-    const err = await expectNoSecrets(svc.soarBearer())
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
     expect(err.message).toMatch(/not logged in/i)
   })
 
@@ -151,8 +152,8 @@ describe('SocAuthService.soarBearer', () => {
     const svc = makeService(f)
     await svc.login(OTP)
 
-    expect(await svc.soarBearer()).toBe('SOAR-1')
-    expect(await svc.soarBearer()).toBe('SOAR-1')
+    expect(await svc.soarBearer(SCOPE)).toBe('SOAR-1')
+    expect(await svc.soarBearer(SCOPE)).toBe('SOAR-1')
     expect(accessCalls(f)).toHaveLength(1)
 
     const [url, init] = accessCalls(f)[0] as [string, any]
@@ -162,7 +163,7 @@ describe('SocAuthService.soarBearer', () => {
     expect(JSON.parse(init.body)).toEqual({
       tenant: 'MASTER',
       client_id: 'SOAR_CLIENT',
-      scopes: '',
+      scopes: SCOPE,
     })
     expect(String(init.headers['cookie'])).toContain('D1N=waf-cookie')
     // SOAR authenticates the exchange with the session token as a Bearer AND
@@ -175,10 +176,10 @@ describe('SocAuthService.soarBearer', () => {
     const f = stubFetch([json(200, { access_token: 'SOAR-T', expires_in: 3600 })])
     const svc = makeService(f, () => 1_000_000, { tenant: 'VCS', soarClientId: 'OTHER' })
     await svc.login(OTP)
-    await svc.soarBearer()
+    await svc.soarBearer(SCOPE)
 
     const init = (accessCalls(f)[0] as [string, any])[1]
-    expect(JSON.parse(init.body)).toEqual({ tenant: 'VCS', client_id: 'OTHER', scopes: '' })
+    expect(JSON.parse(init.body)).toEqual({ tenant: 'VCS', client_id: 'OTHER', scopes: SCOPE })
   })
 
   it('re-exchanges once the clock passes expires_in minus the 60s skew', async () => {
@@ -190,16 +191,16 @@ describe('SocAuthService.soarBearer', () => {
     const svc = makeService(f, () => clock)
     await svc.login(OTP)
 
-    expect(await svc.soarBearer()).toBe('SOAR-1')
+    expect(await svc.soarBearer(SCOPE)).toBe('SOAR-1')
 
     // Just inside the skew window: still cached.
     clock += (3600 - 61) * 1000
-    expect(await svc.soarBearer()).toBe('SOAR-1')
+    expect(await svc.soarBearer(SCOPE)).toBe('SOAR-1')
     expect(accessCalls(f)).toHaveLength(1)
 
     // Past `expires_in - 60s`: a fresh exchange.
     clock += 2000
-    expect(await svc.soarBearer()).toBe('SOAR-2')
+    expect(await svc.soarBearer(SCOPE)).toBe('SOAR-2')
     expect(accessCalls(f)).toHaveLength(2)
   })
 
@@ -207,7 +208,7 @@ describe('SocAuthService.soarBearer', () => {
     const svc = makeService(stubFetch([json(401, { message: 'unauthorized' })]))
     await svc.login(OTP)
 
-    const err = await expectNoSecrets(svc.soarBearer())
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
     expect(err.message).toMatch(/SOAR rejected the SOC session/i)
     expect(err.message).toContain('401')
     expect(err.message).toContain('cookies sent: [')
@@ -217,7 +218,7 @@ describe('SocAuthService.soarBearer', () => {
   it('reports a SOAR rejection, naming the cookies sent, on 403', async () => {
     const svc = makeService(stubFetch([json(403, {})]))
     await svc.login(OTP)
-    const err = await expectNoSecrets(svc.soarBearer())
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
     expect(err.message).toMatch(/SOAR rejected the SOC session/i)
     expect(err.message).toContain('403')
   })
@@ -226,7 +227,7 @@ describe('SocAuthService.soarBearer', () => {
     const svc = makeService(stubFetch([html(200, '<html><body>Blocked by WAF</body></html>')]))
     await svc.login(OTP)
 
-    const err = await expectNoSecrets(svc.soarBearer())
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
     expect(err.message).toMatch(/WAF|malformed|non-JSON/i)
   })
 
@@ -236,7 +237,7 @@ describe('SocAuthService.soarBearer', () => {
     )
     await svc.login(OTP)
 
-    const err = await expectNoSecrets(svc.soarBearer())
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
     expect(err.message).toMatch(/access_token/)
     expect(err.message).toContain('status')
     expect(err.message).not.toContain('RT')
@@ -253,22 +254,22 @@ describe('SocAuthService.authHeadersForSoar', () => {
     let clock = 1_000_000
     const svc = makeService(f, () => clock)
     await svc.login(OTP)
-    await svc.soarBearer()
+    await svc.soarBearer(SCOPE)
 
-    const headers = svc.authHeadersForSoar()
+    const headers = svc.authHeadersForSoar(SCOPE)
     expect(headers.Authorization).toBe('Bearer SOAR-1')
     // SOAR keys on the `token` cookie the SPA builds, carried with the WAF D1N
     expect(headers.Cookie).toContain('D1N=waf-cookie')
     expect(headers.Cookie).toMatch(/token=\{.*SESS-TOKEN/)
 
     clock += 3600 * 1000
-    await svc.soarBearer()
-    expect(svc.authHeadersForSoar().Authorization).toBe('Bearer SOAR-2')
+    await svc.soarBearer(SCOPE)
+    expect(svc.authHeadersForSoar(SCOPE).Authorization).toBe('Bearer SOAR-2')
   })
 
   it('omits Authorization until a bearer has been fetched', async () => {
     const svc = makeService(stubFetch([]))
     await svc.login(OTP)
-    expect(svc.authHeadersForSoar().Authorization).toBeUndefined()
+    expect(svc.authHeadersForSoar(SCOPE).Authorization).toBeUndefined()
   })
 })

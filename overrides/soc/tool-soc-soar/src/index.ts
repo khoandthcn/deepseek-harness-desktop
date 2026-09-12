@@ -59,22 +59,20 @@ export function apply(ctx: Context, config: Config = {}): void {
   const soarBaseUrl = config.soarBaseUrl ?? auth.soarBaseUrl
   const tenant = config.tenant ?? auth.tenant
 
-  // The Bearer is re-read per request, so a refresh between calls is picked up
-  // without rebuilding the client.
-  const http = new SocHttp(soarBaseUrl, {
-    authHeaders: () => auth.authHeadersForSoar(),
-  })
+  // The SOAR Bearer is per-scope: await the (cached) exchange for this call's
+  // scope, then send the Bearer and cookies that scope resolved to. A fresh
+  // SocHttp per call is cheap and keeps the scoped auth header correct.
+  const httpForScope = (scope: string): SocHttp =>
+    new SocHttp(soarBaseUrl, { authHeaders: () => auth.authHeadersForSoar(scope) })
 
-  // `authHeadersForSoar()` is synchronous and only returns a Bearer once one has
-  // been fetched, so every call first awaits the (cached) exchange.
   const soarHttp: SoarHttp = {
-    async postJson<T>(path: string, body: unknown): Promise<T> {
-      await auth.soarBearer()
-      return http.postJson<T>(path, body)
+    async postJson<T>(path: string, body: unknown, scope: string): Promise<T> {
+      await auth.soarBearer(scope)
+      return httpForScope(scope).postJson<T>(path, body)
     },
-    async getJson<T>(path: string): Promise<T> {
-      await auth.soarBearer()
-      return http.getJson<T>(path)
+    async getJson<T>(path: string, scope: string): Promise<T> {
+      await auth.soarBearer(scope)
+      return httpForScope(scope).getJson<T>(path)
     },
   }
 
