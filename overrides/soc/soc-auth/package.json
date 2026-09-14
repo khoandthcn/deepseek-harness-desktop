@@ -8,6 +8,8 @@
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-launch-environment": "workspace:^",
+    "@deepseek-ai/dsh-settings": "workspace:^",
+    "@deepseek-ai/schemastery": "workspace:^",
     "typescript": "^5",
     "vitest": "^3"
   },
@@ -31,9 +33,11 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
-    "@deepseek-ai/dsh-launch-environment": "workspace:^"
+    "@deepseek-ai/dsh-launch-environment": "workspace:^",
+    "@deepseek-ai/dsh-settings": "workspace:^"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-soc-client": "workspace:^"
+    "@deepseek-ai/dsh-soc-client": "workspace:^",
+    "@deepseek-ai/schemastery": "workspace:^"
   }
 }

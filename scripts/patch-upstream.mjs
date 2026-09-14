@@ -105,6 +105,15 @@ patch(
   '  mainWindow = createMainWindow()\n  await mainWindow.loadURL(`${SCHEME}://app/index.html`)\n  setupWindow?.destroy()\n',
 )
 
+// The app menu has no Edit submenu, so on macOS Cmd+C/V/X/A are never wired and
+// nothing can be pasted into an input. Electron's `editMenu` role supplies the
+// standard undo/redo/cut/copy/paste/selectAll items with their accelerators.
+patch(
+  MAIN_TS,
+  "      { role: 'quit' },\n    ],\n  }]))",
+  "      { role: 'quit' },\n    ],\n  }, { role: 'editMenu' }]))",
+)
+
 // Windows ARM64 target: upstream packages win-x64 only, which Windows on ARM runs
 // under x64 emulation (slow enough that the first start looks hung).
 const DESKTOP_SCRIPTS = 'apps/desktop/scripts'
@@ -237,7 +246,9 @@ const SOC_PACKAGE_REFERENCES = {
   'soc-auth': [
     '../../../vendor/cosmokit',
     '../../../vendor/cordis',
+    '../../../vendor/schemastery',
     '../../credentials/credentials',
+    '../../settings/settings',
     '../../util/launch-environment',
     '../soc-client',
   ],

@@ -11,8 +11,10 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
+import type {} from '@deepseek-ai/dsh-settings'
 import { requireConfig } from './config.ts'
 import { SocAuthService } from './service.ts'
 
@@ -21,6 +23,16 @@ export * from './wso2.ts'
 export * from './service.ts'
 
 export const name = 'soc-auth'
+
+/**
+ * The settings namespace the SOC credentials card is keyed to. The card carries
+ * no editable settings — the username and password go through the credentials
+ * domain, not this section — but the Plugins configuration tab only dispatches a
+ * card whose namespace the Host serves, so this section must exist for the card
+ * to appear. Its schema is therefore empty.
+ */
+export const SOC_CREDENTIALS_NS = 'soc-credentials'
+const SocCredentialsSection = z.object({})
 
 /**
  * Nothing is strictly required: credentials come from `ctx.credentials` when
@@ -100,4 +112,14 @@ export function apply(ctx: Context, config: Config | undefined): void {
   })
 
   ctx.provide('socAuth', service)
+
+  // Publish the (empty) settings section the credentials card is keyed to, so
+  // the Plugins configuration tab lists and renders the card. `settings` is a
+  // Host service; if the deployment has none, the card simply does not appear.
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {}, {
+      setSource: () => {},
+      onChange: () => {},
+    })
+  })
 }
