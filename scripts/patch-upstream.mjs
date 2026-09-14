@@ -317,3 +317,124 @@ patch(
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
 console.log(`generated: packages/preset/agent-presets/presets/${SOC_PRESET_ID}`)
+
+// ── 5. SOC Cloud credentials card in Settings → Plugins ──────────────────────
+// A self-contained card that always renders and writes SOC_USERNAME /
+// SOC_PASSWORD through the credentials domain, so the two secrets never pass
+// through the model or the settings file. The two card sources are new files
+// with no upstream to hash-guard; the existing plugins-settings package is
+// snippet-patched to construct the controller and register the card.
+const UI_SETTINGS_PLUGINS_CLIENT = 'packages/client/ui-settings-plugins/src/client'
+for (const file of ['soc-credentials-card-controller.ts', 'SocCredentialsCard.tsx']) {
+  copyFileSync(
+    join(here, 'overrides', 'ui-settings-plugins', file),
+    join(root, UI_SETTINGS_PLUGINS_CLIENT, file),
+  )
+  console.log(`copied: ${UI_SETTINGS_PLUGINS_CLIENT}/${file}`)
+}
+
+const PLUGINS_INDEX = `${UI_SETTINGS_PLUGINS_CLIENT}/index.ts`
+patch(
+  PLUGINS_INDEX,
+  "import { WebSearchCard } from './WebSearchCard.tsx'\n",
+  "import { WebSearchCard } from './WebSearchCard.tsx'\nimport { SocCredentialsCard } from './SocCredentialsCard.tsx'\n",
+)
+patch(
+  PLUGINS_INDEX,
+  "import { WEB_SEARCH_NS, WebSearchCardController } from './web-search-card-controller.ts'\n",
+  "import { WEB_SEARCH_NS, WebSearchCardController } from './web-search-card-controller.ts'\n"
+  + "import { SOC_CREDENTIALS_NS, SocCredentialsCardController } from './soc-credentials-card-controller.ts'\n",
+)
+patch(
+  PLUGINS_INDEX,
+  "export type { WebSearchCardFace, WebSearchCardState } from './web-search-card-controller.ts'\n",
+  "export type { WebSearchCardFace, WebSearchCardState } from './web-search-card-controller.ts'\n"
+  + "export type { SocCredentialsCardFace, SocCredentialsCardState } from './soc-credentials-card-controller.ts'\n",
+)
+patch(
+  PLUGINS_INDEX,
+  "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n",
+  "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n"
+  + "  const socCredentials = new SocCredentialsCardController(\n"
+  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_CREDENTIALS_NS }), ctx)\n",
+)
+patch(
+  PLUGINS_INDEX,
+  "    () => ctx.remote.$on('credentials/reference-updated', (ref) => { webSearch.refreshCredential(ref) }),\n",
+  "    () => ctx.remote.$on('credentials/reference-updated', (ref) => {\n"
+  + '      webSearch.refreshCredential(ref)\n'
+  + '      socCredentials.refreshCredential(ref)\n'
+  + '    }),\n',
+)
+patch(
+  PLUGINS_INDEX,
+  "      inject: () => webSearch.inject(),\n    }, WebSearchCard)\n  })\n",
+  "      inject: () => webSearch.inject(),\n    }, WebSearchCard)\n"
+  + '    yield ctx.slots.register({\n'
+  + "      name: 'settings.plugin.item',\n"
+  + '      key: SOC_CREDENTIALS_NS,\n'
+  + '      locale: NS,\n'
+  + '      inject: () => socCredentials.inject(),\n'
+  + '    }, SocCredentialsCard)\n  })\n',
+)
+
+// Locale keys the card renders (verify-client-ui-i18n requires locale-owned copy).
+const PLUGINS_LOCALES = `${UI_SETTINGS_PLUGINS_CLIENT}/locales.ts`
+patch(
+  PLUGINS_LOCALES,
+  "  | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'\n",
+  "  | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'\n"
+  + "  | 'socTitle' | 'socDescription'\n"
+  + "  | 'socUsername' | 'socUsernameHint' | 'socUsernameSet' | 'socUsernameUnset'\n"
+  + "  | 'socPassword' | 'socPasswordHint' | 'socPasswordSet' | 'socPasswordUnset'\n",
+)
+patch(
+  PLUGINS_LOCALES,
+  "  subagentModelSelectionOff: 'Subagents use configured defaults or inherit the parent agent\\'s model. Saved model choices are retained.',\n}",
+  "  subagentModelSelectionOff: 'Subagents use configured defaults or inherit the parent agent\\'s model. Saved model choices are retained.',\n"
+  + "  socTitle: 'SOC Cloud credentials',\n"
+  + "  socDescription: 'The sign-in the SOC Cloud tools use.',\n"
+  + "  socUsername: 'Username',\n"
+  + "  socUsernameHint: 'Stored outside the settings file. Leave blank to keep the current username.',\n"
+  + "  socUsernameSet: 'A username is configured.',\n"
+  + "  socUsernameUnset: 'No username is configured.',\n"
+  + "  socPassword: 'Password',\n"
+  + "  socPasswordHint: 'Stored outside the settings file. Leave blank to keep the current password.',\n"
+  + "  socPasswordSet: 'A password is configured.',\n"
+  + "  socPasswordUnset: 'No password is configured.',\n}",
+)
+patch(
+  PLUGINS_LOCALES,
+  "  subagentModelSelectionOff: '关闭后，Subagent 使用配置的默认模型或继承父 Agent 的模型；已选模型会保留。',\n}",
+  "  subagentModelSelectionOff: '关闭后，Subagent 使用配置的默认模型或继承父 Agent 的模型；已选模型会保留。',\n"
+  + "  socTitle: 'SOC 云凭据',\n"
+  + "  socDescription: 'SOC 云工具使用的登录凭据。',\n"
+  + "  socUsername: '用户名',\n"
+  + "  socUsernameHint: '不写入设置文件。留空表示保持当前用户名。',\n"
+  + "  socUsernameSet: '已配置用户名。',\n"
+  + "  socUsernameUnset: '未配置用户名。',\n"
+  + "  socPassword: '密码',\n"
+  + "  socPasswordHint: '不写入设置文件。留空表示保持当前密码。',\n"
+  + "  socPasswordSet: '已配置密码。',\n"
+  + "  socPasswordUnset: '未配置密码。',\n}",
+)
+
+// The generated slot inventory enumerates the settings.plugin.item occupants.
+patch(
+  'packages/extensions/cordis-client-runner/src/client/slot-catalog.ts',
+  "      'client-ui-settings-plugins WebSearchCard',\n    ],",
+  "      'client-ui-settings-plugins WebSearchCard',\n      'client-ui-settings-plugins SocCredentialsCard',\n    ],",
+)
+
+// The package test asserts the exact set of shipped cards.
+const PLUGINS_TEST = 'packages/client/ui-settings-plugins/tests/apply.client.spec.ts'
+patch(
+  PLUGINS_TEST,
+  "      .toEqual(['shell', 'agent-loop', 'subagent-model-selection', 'web-search-deepseek'])",
+  "      .toEqual(['shell', 'agent-loop', 'subagent-model-selection', 'web-search-deepseek', 'soc-credentials'])",
+)
+patch(
+  PLUGINS_TEST,
+  "    expect(slots.entries('settings.plugin.item')).toHaveLength(4)",
+  "    expect(slots.entries('settings.plugin.item')).toHaveLength(5)",
+)
