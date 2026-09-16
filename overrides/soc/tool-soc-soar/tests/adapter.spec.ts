@@ -87,12 +87,12 @@ describe('SoarAdapter', () => {
 
   it('search_tickets passes rawQuery through verbatim', async () => {
     const { http, soar } = adapter({
-      '/soarapi/v1/MASTER/ticket/_search': { count: 1, data: [{ _id: 7, status: 'OPEN' }] },
+      '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 1, data: [{ _id: 7, status: 'OPEN' }] },
     })
     const env = await soar.searchTickets({ rawQuery: 'status = "OPEN"', page: 2, size: 10 })
     expect(env.data[0]!.status).toBe('OPEN')
     const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
-    expect(path).toBe('/soarapi/v1/MASTER/ticket/_search')
+    expect(path).toBe('/ticketapi/v1/MASTER/ticket/restricted_search')
     expect(body).toEqual({
       _from: 20,
       _size: 10,
@@ -105,7 +105,7 @@ describe('SoarAdapter', () => {
 
   it('search_tickets sends an empty query when rawQuery is absent', async () => {
     const { http, soar } = adapter({
-      '/soarapi/v1/MASTER/ticket/_search': { count: 0, data: [] },
+      '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 0, data: [] },
     })
     await soar.searchTickets({})
     const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]

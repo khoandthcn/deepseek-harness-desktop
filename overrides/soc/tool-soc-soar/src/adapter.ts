@@ -117,7 +117,8 @@ export class SoarAdapter {
       _fields: '',
       query: options.rawQuery || '',
     }
-    const data = await this.http.postJson(`${this.base()}/ticket/_search`, body, SOAR_SCOPES.ticketSearch)
+    // Tickets live under the ticketapi service (not soarapi) and use restricted_search.
+    const data = await this.http.postJson(`/ticketapi/v1/${this.tenant}/ticket/restricted_search`, body, SOAR_SCOPES.ticketSearch)
     return parseSearchEnvelope<Ticket>(data)
   }
 

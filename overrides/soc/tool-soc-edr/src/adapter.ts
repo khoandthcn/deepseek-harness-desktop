@@ -25,6 +25,12 @@ export interface EdrHttp {
   getJson<T = unknown>(path: string): Promise<T>
 }
 
+/** A search with no explicit window covers the last 24h, matching the SPA default. */
+const EDR_DEFAULT_WINDOW_SECONDS = 86400
+/** Sort shapes the EDR API expects (an object, not a string). */
+const EDR_EVENT_SORT = { field: 'TimeStamp', direction: 'desc' } as const
+const EDR_ALERT_SORT = { field: 'timestamp_create', direction: 'desc' } as const
+
 /** EDR API paths, read from the EDR SPA's route map. No tenant path segment. */
 export const EDR_PATHS = {
   eventSearch: '/eventHandler/Search',
@@ -47,7 +53,7 @@ export interface SearchOptions {
   toTimestamp?: number | null | undefined
   /** A `since` cursor, epoch milliseconds. */
   since?: number | null | undefined
-  sort?: string | undefined
+  sort?: { field: string, direction: string } | undefined
   limit?: number | undefined
 }
 
@@ -59,7 +65,7 @@ export interface SearchEventsOptions extends SearchOptions {
 export type SearchAlertsOptions = SearchOptions
 
 export interface SearchAgentsOptions {
-  query?: string | null | undefined
+  query?: Record<string, unknown> | null | undefined
   since?: number | null | undefined
   limit?: number | undefined
 }
@@ -67,14 +73,6 @@ export interface SearchAgentsOptions {
 export interface HuntingHistoryOptions {
   from?: number | undefined
   size?: number | undefined
-}
-
-/**
- * Whether to send `is_use_last_seconds`: explicit when the caller set the flag,
- * otherwise inferred from a `last_seconds` value being present.
- */
-function useLastSeconds(explicit: boolean | undefined, lastSeconds: number | null | undefined): boolean {
-  return explicit ?? (lastSeconds !== null && lastSeconds !== undefined)
 }
 
 export class EdrAdapter {
@@ -85,11 +83,11 @@ export class EdrAdapter {
   }
 
   async searchEvents(options: SearchEventsOptions = {}): Promise<EdrSearchEnvelope<EdrEvent>> {
-    const { limit = 50, sort = '' } = options
+    const { limit = 50, sort = EDR_EVENT_SORT } = options
     const body = {
-      is_use_last_seconds: useLastSeconds(undefined, options.lastSeconds),
+      is_use_last_seconds: true,
       keyQuickSearch: options.keyQuickSearch ?? '',
-      last_seconds: options.lastSeconds ?? 0,
+      last_seconds: options.lastSeconds ?? EDR_DEFAULT_WINDOW_SECONDS,
       since: options.since ?? 0,
       sort,
       limit,
@@ -102,25 +100,25 @@ export class EdrAdapter {
   }
 
   async searchAlerts(options: SearchAlertsOptions = {}): Promise<EdrSearchEnvelope<EdrAlert>> {
-    const { limit = 50, sort = '' } = options
+    const { limit = 50, sort = EDR_ALERT_SORT } = options
     const body = {
       search_query_str: options.searchQuery ?? '',
       since: options.since ?? 0,
       limit,
       sort,
-      last_seconds: options.lastSeconds ?? 0,
+      last_seconds: options.lastSeconds ?? EDR_DEFAULT_WINDOW_SECONDS,
       from_timestamp: options.fromTimestamp ?? 0,
       to_timestamp: options.toTimestamp ?? 0,
-      is_use_last_seconds: useLastSeconds(undefined, options.lastSeconds),
+      is_use_last_seconds: true,
     }
     const data = await this.http.postJson(EDR_PATHS.alertSearch, body)
     return parseEdrSearchEnvelope<EdrAlert>(data, 'data')
   }
 
   async searchAgents(options: SearchAgentsOptions = {}): Promise<EdrSearchEnvelope<EdrAgent>> {
-    const { limit = 50 } = options
+    const { limit = 100 } = options
     const body = {
-      query: options.query ?? '',
+      query: options.query ?? {},
       limit,
       since: options.since ?? 0,
     }

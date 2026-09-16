@@ -44,12 +44,14 @@ describe('EdrAdapter', () => {
     expect(body.keyQuickSearch).toBe('')
   })
 
-  it('search_events defaults limit to 50 and infers is_use_last_seconds=false', async () => {
+  it('search_events defaults to a 24h window with a timestamp-desc sort', async () => {
     const { http, edr } = adapter({ [EDR_PATHS.eventSearch]: { total: 0, data: [] } })
     await edr.searchEvents({})
     const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(body.limit).toBe(50)
-    expect(body.is_use_last_seconds).toBe(false)
+    expect(body.is_use_last_seconds).toBe(true)
+    expect(body.last_seconds).toBe(86400)
+    expect(body.sort).toEqual({ field: 'TimeStamp', direction: 'desc' })
     expect(body.search_query_str).toBe('')
   })
 
@@ -64,19 +66,20 @@ describe('EdrAdapter', () => {
     expect(body.search_query_str).toBe('severity = "high"')
     expect(body.from_timestamp).toBe(100)
     expect(body.to_timestamp).toBe(200)
-    expect(body.is_use_last_seconds).toBe(false)
+    expect(body.is_use_last_seconds).toBe(true)
+    expect(body.sort).toEqual({ field: 'timestamp_create', direction: 'desc' })
   })
 
   it('search_agents parses agent_infos/total', async () => {
     const { http, edr } = adapter({
       [EDR_PATHS.agentSearch]: { total: 1, agent_infos: [{ agent_id: 'ag1', hostname: 'srv1' }] },
     })
-    const env = await edr.searchAgents({ query: 'srv1', limit: 10 })
+    const env = await edr.searchAgents({ query: { compare: { field: 'online', operator: '=', value: 'true' } }, limit: 10 })
     expect(env.total).toBe(1)
     expect(env.items[0]!.hostname).toBe('srv1')
     const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/agentManagement/Search')
-    expect(body).toEqual({ query: 'srv1', limit: 10, since: 0 })
+    expect(body).toEqual({ query: { compare: { field: 'online', operator: '=', value: 'true' } }, limit: 10, since: 0 })
   })
 
   it('threat_hunting_history parses list/total and forwards from/size', async () => {
