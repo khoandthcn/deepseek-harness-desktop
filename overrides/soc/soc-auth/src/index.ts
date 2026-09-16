@@ -52,6 +52,22 @@ export interface Config {
   tenant?: string | undefined
   /** SOAR OAuth client id used by the access exchange; defaults to `SOAR_CLIENT`. */
   soarClientId?: string | undefined
+  /** Base URL of the EDR API; defaults to `https://edr.example.com`. */
+  edrBaseUrl?: string | undefined
+  /** EDR OAuth client id used by its authorize; defaults to `EDR`. */
+  edrClientId?: string | undefined
+  /** EDR OIDC callback URL; defaults to `${edrBaseUrl}/v2/callback`. */
+  edrRedirectUri?: string | undefined
+  /** Base URL of the SIEM API; defaults to `https://siem.example.com`. */
+  siemBaseUrl?: string | undefined
+  /** SIEM OAuth client id used by its own authorize/token; defaults to `cym_portal`. */
+  siemClientId?: string | undefined
+  /** SIEM OAuth audience; defaults to `cym_dashboard_api`. */
+  siemAudience?: string | undefined
+  /** SIEM OAuth scope; defaults to `read:db_dashboard`. */
+  siemScope?: string | undefined
+  /** SIEM management client id sent by probe tools; defaults to `cym_api`. */
+  siemMgmtClientId?: string | undefined
   /**
    * Credential *references*, never the values themselves: the name of the entry
    * to read from `ctx.credentials`, falling back to the environment variable of
@@ -105,6 +121,14 @@ export function apply(ctx: Context, config: Config | undefined): void {
     soarBaseUrl: checked.soarBaseUrl,
     tenant: checked.tenant,
     soarClientId: checked.soarClientId,
+    edrBaseUrl: checked.edrBaseUrl,
+    edrClientId: checked.edrClientId,
+    edrRedirectUri: checked.edrRedirectUri,
+    siemBaseUrl: checked.siemBaseUrl,
+    siemClientId: checked.siemClientId,
+    siemAudience: checked.siemAudience,
+    siemScope: checked.siemScope,
+    siemMgmtClientId: checked.siemMgmtClientId,
     credentials: async () => ({
       username: await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),

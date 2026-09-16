@@ -273,3 +273,327 @@ describe('SocAuthService.authHeadersForSoar', () => {
     expect(svc.authHeadersForSoar(SCOPE).Authorization).toBeUndefined()
   })
 })
+
+const EDR = 'https://edr.example'
+
+/**
+ * A fetch stub for the EDR flow, mirroring `stubFetch` but for EDR's routes:
+ *  - the WSO2 login sequence;
+ *  - the per-system OIDC authorize (carries the SSO cookie) → EDR `/v2/callback`;
+ *  - the IAM `/authen/callback` that returns the `session_token`;
+ *  - a caller-supplied queue for `/authentication/GetAccessTokenBySocToken`.
+ */
+function stubFetchEdr(tokenResponses: Response[], wso2: Response[] = wso2HappyPath()) {
+  let iam = 0
+  let tok = 0
+  const cookieOf = (init: any): string => String(init?.headers?.cookie ?? '')
+  const fn = vi.fn(async (url: string, init?: any) => {
+    const u = String(url)
+    if (u.startsWith(`${EDR}/authentication/GetAccessTokenBySocToken`)) {
+      const res = tokenResponses[tok++]
+      if (!res) throw new Error('unexpected extra EDR token call')
+      return res
+    }
+    // EDR exchanges the SOC token at the IAM host, not its own host.
+    if (u.startsWith(`${IAM}/authen/callback`)) {
+      return json(200, { session_token: 'SESS-EDR', id_token: 'ID-EDR', access_token: 'AC' })
+    }
+    // per-system authorize: rides the SSO cookie, 302s to EDR's callback.
+    if (u.startsWith(`${IAM}/oauth2/authorize`) && u.includes('redirect_uri=')
+      && cookieOf(init).includes('commonAuthId')) {
+      return redirect(`${EDR}/v2/callback?code=EDRCODE`)
+    }
+    const res = wso2[iam++]
+    if (!res) throw new Error('unexpected extra WSO2 fetch call')
+    return res
+  })
+  return fn
+}
+
+/** The `/authentication/GetAccessTokenBySocToken` calls alone. */
+function edrCalls(f: ReturnType<typeof stubFetchEdr>) {
+  return callsOf(f).filter((c) => String(c[0]).includes('/authentication/GetAccessTokenBySocToken'))
+}
+
+function makeEdrService(fetchImpl: any, now: () => number = () => 1_000_000) {
+  return makeService(fetchImpl, now, { edrBaseUrl: EDR })
+}
+
+describe('SocAuthService.edrToken', () => {
+  it('rejects with a clear error before any login', async () => {
+    const svc = makeEdrService(stubFetchEdr([]))
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/not logged in/i)
+  })
+
+  it('exchanges the SOC token once and caches the EDR token', async () => {
+    const f = stubFetchEdr([json(200, { success: true, access_token: 'EDR-1', refresh_token: 'RT', expired_in_seconds: 3600 })])
+    const svc = makeEdrService(f)
+    await svc.login(OTP)
+
+    expect(await svc.edrToken()).toBe('EDR-1')
+    expect(await svc.edrToken()).toBe('EDR-1')
+    expect(edrCalls(f)).toHaveLength(1)
+
+    const [url, init] = edrCalls(f)[0] as [string, any]
+    expect(url).toBe(`${EDR}/authentication/GetAccessTokenBySocToken`)
+    expect(init.method).toBe('POST')
+    expect(String(init.headers['content-type'])).toMatch(/application\/json/)
+    // The SOC token from the IAM callback is what EDR exchanges.
+    expect(JSON.parse(init.body)).toEqual({ soc_token: 'SESS-EDR' })
+  })
+
+  it('posts the code to the IAM host callback with client_id EDR', async () => {
+    const f = stubFetchEdr([json(200, { success: true, access_token: 'EDR-1', expired_in_seconds: 3600 })])
+    const svc = makeEdrService(f)
+    await svc.login(OTP)
+    await svc.edrToken()
+
+    const callback = callsOf(f).find((c) => String(c[0]).startsWith(`${IAM}/authen/callback`))
+    expect(callback).toBeDefined()
+    expect(JSON.parse(callback![1].body)).toEqual({ code: 'EDRCODE', client_id: 'EDR' })
+  })
+
+  it('re-exchanges once the clock passes expired_in_seconds minus the 60s skew', async () => {
+    const f = stubFetchEdr([
+      json(200, { success: true, access_token: 'EDR-1', expired_in_seconds: 3600 }),
+      json(200, { success: true, access_token: 'EDR-2', expired_in_seconds: 3600 }),
+    ])
+    let clock = 1_000_000
+    const svc = makeEdrService(f, () => clock)
+    await svc.login(OTP)
+
+    expect(await svc.edrToken()).toBe('EDR-1')
+
+    // Just inside the skew window: still cached.
+    clock += (3600 - 61) * 1000
+    expect(await svc.edrToken()).toBe('EDR-1')
+    expect(edrCalls(f)).toHaveLength(1)
+
+    // Past `expired_in_seconds - 60s`: a fresh exchange.
+    clock += 2000
+    expect(await svc.edrToken()).toBe('EDR-2')
+    expect(edrCalls(f)).toHaveLength(2)
+  })
+
+  it('reports an EDR rejection and forces a fresh login on 401', async () => {
+    const svc = makeEdrService(stubFetchEdr([json(401, { message: 'unauthorized' })]))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/EDR rejected the SOC session/i)
+    expect(err.message).toContain('401')
+    expect(svc.isAuthenticated()).toBe(false)
+  })
+
+  it('rejects with a malformed/WAF error on a non-JSON response', async () => {
+    const svc = makeEdrService(stubFetchEdr([html(200, '<html><body>Blocked by WAF</body></html>')]))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/WAF|malformed|non-JSON/i)
+  })
+
+  it('rejects listing only safe keys when access_token is missing', async () => {
+    const svc = makeEdrService(
+      stubFetchEdr([json(200, { success: false, refresh_token: 'RT', id_token: 'IDT', status: 'nope' })]),
+    )
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/access_token/)
+    expect(err.message).toContain('status')
+    expect(err.message).not.toContain('RT')
+    expect(err.message).not.toContain('IDT')
+  })
+})
+
+describe('SocAuthService.edrAuthHeaders', () => {
+  it('carries the EDR credential as a cookie plus the WAF D1N, no Authorization', async () => {
+    const f = stubFetchEdr([json(200, { success: true, access_token: 'EDR-1', expired_in_seconds: 3600 })])
+    const svc = makeEdrService(f)
+    await svc.login(OTP)
+    await svc.edrToken()
+
+    const headers = svc.edrAuthHeaders()
+    expect(headers.Authorization).toBeUndefined()
+    expect(headers.Cookie).toContain('access_token=EDR-1')
+    expect(headers.Cookie).toContain('D1N=waf-cookie')
+  })
+
+  it('returns no cookie header until a token has been fetched', async () => {
+    const svc = makeEdrService(stubFetchEdr([]))
+    await svc.login(OTP)
+    expect(svc.edrAuthHeaders().Cookie).toBeUndefined()
+  })
+
+  it('defaults edrBaseUrl to the the platform EDR host', () => {
+    const svc = makeService(stubFetchEdr([]))
+    expect(svc.edrBaseUrl).toBe('https://edr.example.com')
+  })
+})
+
+const SIEM = 'https://siem.example'
+
+/**
+ * A fetch stub for the SIEM flow. SIEM has its OWN OAuth server (not the WSO2
+ * per-scope authorize nor the EDR token exchange):
+ *  - the WSO2 login sequence;
+ *  - SIEM's own authorize on its host (carries the SSO cookie) → `${SIEM}?code=…`;
+ *  - a caller-supplied queue for `${SIEM}/oauth/token`.
+ */
+function stubFetchSiem(tokenResponses: Response[], wso2: Response[] = wso2HappyPath()) {
+  let iam = 0
+  let tok = 0
+  const cookieOf = (init: any): string => String(init?.headers?.cookie ?? '')
+  const fn = vi.fn(async (url: string, init?: any) => {
+    const u = String(url)
+    if (u.startsWith(`${SIEM}/oauth/token`)) {
+      const res = tokenResponses[tok++]
+      if (!res) throw new Error('unexpected extra SIEM token call')
+      return res
+    }
+    // SIEM's own authorize: rides the SSO cookie, 302s to its redirect_uri (the
+    // SIEM host itself) carrying the code.
+    if (u.startsWith(`${SIEM}/oauth/authorize`) && cookieOf(init).includes('commonAuthId')) {
+      return redirect(`${SIEM}?code=SIEMCODE`)
+    }
+    const res = wso2[iam++]
+    if (!res) throw new Error('unexpected extra WSO2 fetch call')
+    return res
+  })
+  return fn
+}
+
+/** The `${SIEM}/oauth/token` calls alone. */
+function siemCalls(f: ReturnType<typeof stubFetchSiem>) {
+  return callsOf(f).filter((c) => String(c[0]).startsWith(`${SIEM}/oauth/token`))
+}
+
+function makeSiemService(fetchImpl: any, now: () => number = () => 1_000_000) {
+  return makeService(fetchImpl, now, { siemBaseUrl: SIEM })
+}
+
+describe('SocAuthService.siemToken', () => {
+  it('rejects with a clear error before any login', async () => {
+    const svc = makeSiemService(stubFetchSiem([]))
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/not logged in/i)
+  })
+
+  it('runs SIEM authorize then token exchange once, and caches the token', async () => {
+    const f = stubFetchSiem([json(200, { access_token: 'SIEM-1', token_type: 'Bearer', expires_in: 3600 })])
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+
+    expect(await svc.siemToken()).toBe('SIEM-1')
+    expect(await svc.siemToken()).toBe('SIEM-1')
+    expect(siemCalls(f)).toHaveLength(1)
+
+    const [url, init] = siemCalls(f)[0] as [string, any]
+    expect(url).toBe(`${SIEM}/oauth/token`)
+    expect(init.method).toBe('POST')
+    expect(String(init.headers['content-type'])).toMatch(/application\/x-www-form-urlencoded/)
+    const body = new URLSearchParams(String(init.body))
+    expect(body.get('code')).toBe('SIEMCODE')
+    expect(body.get('client_id')).toBe('cym_portal')
+    expect(body.get('grant_type')).toBe('authorization_code')
+    expect(body.get('redirect_uri')).toBe(SIEM)
+    expect(body.get('audience')).toBe('cym_dashboard_api')
+  })
+
+  it('parses the token defensively from `token` or `accessToken`', async () => {
+    const fromToken = makeSiemService(stubFetchSiem([json(200, { token: 'SIEM-TK' })]))
+    await fromToken.login(OTP)
+    expect(await fromToken.siemToken()).toBe('SIEM-TK')
+
+    const fromCamel = makeSiemService(stubFetchSiem([json(200, { accessToken: 'SIEM-CAMEL' })]))
+    await fromCamel.login(OTP)
+    expect(await fromCamel.siemToken()).toBe('SIEM-CAMEL')
+  })
+
+  it('caches with a short default TTL when the response omits expires_in', async () => {
+    const f = stubFetchSiem([
+      json(200, { access_token: 'SIEM-1' }),
+      json(200, { access_token: 'SIEM-2' }),
+    ])
+    let clock = 1_000_000
+    const svc = makeSiemService(f, () => clock)
+    await svc.login(OTP)
+
+    expect(await svc.siemToken()).toBe('SIEM-1')
+    // Inside the 300s default (minus 60s skew): still cached.
+    clock += 200 * 1000
+    expect(await svc.siemToken()).toBe('SIEM-1')
+    expect(siemCalls(f)).toHaveLength(1)
+    // Past the default TTL: a fresh acquisition.
+    clock += 200 * 1000
+    expect(await svc.siemToken()).toBe('SIEM-2')
+    expect(siemCalls(f)).toHaveLength(2)
+  })
+
+  it('reports the SIEM token endpoint status and message on a non-200, hiding secrets', async () => {
+    const svc = makeSiemService(stubFetchSiem([json(401, { error: 'invalid_grant' })]))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/SIEM token endpoint returned HTTP 401/i)
+    expect(err.message).toContain('invalid_grant')
+  })
+
+  it('rejects listing only safe keys when no token is present', async () => {
+    const svc = makeSiemService(stubFetchSiem([json(200, { refresh_token: 'RT', id_token: 'IDT', status: 'nope' })]))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/no access token/i)
+    expect(err.message).toContain('status')
+    expect(err.message).not.toContain('RT')
+    expect(err.message).not.toContain('IDT')
+  })
+
+  it('throws the SSO-expired error when SIEM authorize bounces to the login form', async () => {
+    // The WSO2 login (IAM host) still succeeds; only the later SIEM authorize
+    // bounces to the login form, i.e. the SSO session for SIEM is gone.
+    let iam = 0
+    const wso2 = wso2HappyPath()
+    const f = vi.fn(async (url: string) => {
+      const u = String(url)
+      if (u.startsWith(`${SIEM}/oauth/authorize`)) {
+        return redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K9`)
+      }
+      const res = wso2[iam++]
+      if (!res) throw new Error('unexpected extra WSO2 fetch call')
+      return res
+    })
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/SSO session has expired|soc_login/i)
+  })
+})
+
+describe('SocAuthService.siemAuthHeaders', () => {
+  it('carries a Bearer token plus the WAF D1N cookie', async () => {
+    const f = stubFetchSiem([json(200, { access_token: 'SIEM-1', token_type: 'Bearer', expires_in: 3600 })])
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+    await svc.siemToken()
+
+    const headers = svc.siemAuthHeaders()
+    expect(headers.Authorization).toBe('Bearer SIEM-1')
+    expect(headers.Cookie).toContain('D1N=waf-cookie')
+  })
+
+  it('returns no Authorization until a token has been fetched', async () => {
+    const svc = makeSiemService(stubFetchSiem([]))
+    await svc.login(OTP)
+    expect(svc.siemAuthHeaders().Authorization).toBeUndefined()
+  })
+
+  it('defaults siemBaseUrl to the the platform SIEM host', () => {
+    const svc = makeService(stubFetchSiem([]))
+    expect(svc.siemBaseUrl).toBe('https://siem.example.com')
+  })
+})
