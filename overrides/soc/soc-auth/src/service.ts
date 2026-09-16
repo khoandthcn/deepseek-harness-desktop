@@ -17,6 +17,7 @@
  * thrown message.
  */
 
+import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
 import { establishAppSession, establishSiemSession, runWso2Login, SocAuthError, type FetchLike } from './wso2.ts'
 
 /** Refresh a little before the real expiry, so an in-flight call cannot race it. */
@@ -525,22 +526,36 @@ export class SocAuthService {
       fetchImpl: this.fetchImpl,
     })
     const url = `${this.siemBaseUrl}/oauth/token`
-    let res: Response
-    try {
-      res = await doFetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: this.siemClientId,
-          grant_type: 'authorization_code',
-          redirect_uri: this.siemBaseUrl,
-          audience: this.siemAudience,
-        }).toString(),
-      })
-    } catch (cause) {
-      throw new SocAuthError(`SOC auth: the SIEM token exchange (${url}) failed (network error).`, { cause })
+    const body = new URLSearchParams({
+      code,
+      client_id: this.siemClientId,
+      grant_type: 'authorization_code',
+      redirect_uri: this.siemBaseUrl,
+      audience: this.siemAudience,
+    }).toString()
+    // The token POST must carry the session cookies (commonAuthId, D1N) from the
+    // authorize step; a cookie-less request is answered by the WAF's D1N
+    // bootstrap page (HTTP 200 HTML), not the token. If that page comes back
+    // anyway, adopt its D1N and reissue once.
+    const post = async (jar: Record<string, string>, afterBootstrap = false): Promise<Response> => {
+      const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ')
+      let response: Response
+      try {
+        response = await doFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded', ...(cookie ? { cookie } : {}) },
+          body,
+        })
+      } catch (cause) {
+        throw new SocAuthError(`SOC auth: the SIEM token exchange (${url}) failed (network error).`, { cause })
+      }
+      if (!afterBootstrap && response.status === 200) {
+        const d1n = parseD1nBootstrap(await response.clone().text())
+        if (d1n !== undefined) return post({ ...jar, [D1N_COOKIE]: d1n }, true)
+      }
+      return response
     }
+    const res = await post(cookies)
 
     if (res.status !== 200) {
       // Never echo the code or the body beyond a short `message` field.
