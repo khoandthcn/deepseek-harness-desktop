@@ -400,8 +400,15 @@ export class SocAuthService {
    *   `return { Authorization: \`Bearer ${this.edrCred?.token}\` }`
    */
   edrAuthHeaders(): Record<string, string> {
+    // The EDR SPA's request layer sets `Authorization: Bearer <token>` from the
+    // stored access token (`setAuthData`); the `access_token` cookie it also
+    // writes only tracks expiry. Sending the cookie alone reads as anonymous:
+    // most endpoints answered 200 with nothing and threatHunting answered 401.
+    const headers: Record<string, string> = {}
+    if (this.edrCred) headers.Authorization = `Bearer ${this.edrCred.token}`
     const cookie = Object.entries(this.edrCookies).map(([k, v]) => `${k}=${v}`).join('; ')
-    return cookie ? { Cookie: cookie } : {}
+    if (cookie) headers.Cookie = cookie
+    return headers
   }
 
   private async exchangeEdrToken(): Promise<string> {

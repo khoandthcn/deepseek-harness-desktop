@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { establishAppSession, parseSessionDataKey, runWso2Login } from '../src/wso2.ts'
+import { establishAppSession, establishSiemSession, parseSessionDataKey, runWso2Login } from '../src/wso2.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
  * positional args the stubs do not declare, so narrow once here. */
@@ -239,5 +239,46 @@ describe('establishAppSession', () => {
       cookies: {},
       fetchImpl: f as any,
     })).rejects.toThrow(/SSO session has expired|log in again/i)
+  })
+})
+
+describe('establishSiemSession', () => {
+  const SIEM = 'https://siem.example'
+
+  it('follows the gatekeeper\'s IAM callback and returns only the code at the redirect_uri', async () => {
+    // SIEM's gatekeeper: authorize sets its session and bounces to IAM; with SSO,
+    // IAM comes back to the gatekeeper's own callback on the SIEM origin carrying
+    // IAM's code; the gatekeeper redeems that server-side and only then 302s to
+    // the app's redirect_uri (the bare origin, path `/`) with the app code.
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?response_type=code&client_id=siem-iam&state=S1`, 'gatekeeper_session=gk1; Path=/'),
+      redirect(`${SIEM}/oauth/soc_platform_iam/callback?code=IAMCODE&state=S1`),
+      redirect(`${SIEM}/?code=APPCODE`),
+    ])
+    const { code, cookies } = await establishSiemSession({
+      siemBaseUrl: SIEM,
+      clientId: 'cym_portal',
+      audience: 'cym_dashboard_api',
+      scope: 'read:db_dashboard',
+      cookies: { commonAuthId: 'abc123', D1N: 'waf' },
+      fetchImpl: f as any,
+    })
+    // Returning IAMCODE here is exactly what produced invalid_grant at /oauth/token.
+    expect(code).toBe('APPCODE')
+    expect(f).toHaveBeenCalledTimes(3)
+    // the gatekeeper session rides every later hop, and reaches the token POST
+    expect(cookies['gatekeeper_session']).toBe('gk1')
+    expect(String(callsOf(f)[2]![1].headers['cookie'])).toContain('gatekeeper_session=gk1')
+  })
+
+  it('fails with a re-login message when the chain lands on the login form', async () => {
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?response_type=code&client_id=siem-iam`),
+      redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K1`),
+    ])
+    await expect(establishSiemSession({
+      siemBaseUrl: SIEM, clientId: 'cym_portal', audience: 'cym_dashboard_api', scope: 'read:db_dashboard',
+      cookies: {}, fetchImpl: f as any,
+    })).rejects.toThrow(/SSO session has expired|soc_login/i)
   })
 })

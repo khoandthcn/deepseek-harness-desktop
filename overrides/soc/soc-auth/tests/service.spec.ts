@@ -409,14 +409,16 @@ describe('SocAuthService.edrToken', () => {
 })
 
 describe('SocAuthService.edrAuthHeaders', () => {
-  it('carries the EDR credential as a cookie plus the WAF D1N, no Authorization', async () => {
+  it('carries the EDR credential as Authorization: Bearer, with the cookies alongside', async () => {
     const f = stubFetchEdr([json(200, { success: true, access_token: 'EDR-1', expired_in_seconds: 3600 })])
     const svc = makeEdrService(f)
     await svc.login(OTP)
     await svc.edrToken()
 
+    // The EDR SPA's request layer sets `Authorization: Bearer <token>`; sending
+    // only the cookie read as anonymous (200 with nothing, threatHunting 401).
     const headers = svc.edrAuthHeaders()
-    expect(headers.Authorization).toBeUndefined()
+    expect(headers.Authorization).toBe('Bearer EDR-1')
     expect(headers.Cookie).toContain('access_token=EDR-1')
     expect(headers.Cookie).toContain('D1N=waf-cookie')
   })

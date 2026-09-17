@@ -297,7 +297,14 @@ export async function establishSiemSession(
     redirect_uri: base,
     include_granted_scope: 'false',
   }).toString()}`
-  const redirectOrigin = new URL(base).origin
+  // The app's redirect_uri is the bare origin, so its path is `/`. It must be
+  // matched on path too: SIEM's gatekeeper first bounces through IAM and back to
+  // its own `/oauth/soc_platform_iam/callback?code=…` on this same origin — that
+  // code is IAM's, for the gatekeeper to redeem server-side. Stopping there hands
+  // the token endpoint the wrong code, which it rejects as invalid_grant.
+  const redirectTarget = new URL(base)
+  const redirectOrigin = redirectTarget.origin
+  const redirectPath = redirectTarget.pathname || '/'
 
   for (let hop = 0; hop < 8; hop++) {
     const res = await request(next)
@@ -317,7 +324,7 @@ export async function establishSiemSession(
       )
     }
     const code = abs.searchParams.get('code')
-    if (code && abs.origin === redirectOrigin) {
+    if (code && abs.origin === redirectOrigin && abs.pathname === redirectPath) {
       return { code, cookies: jar.snapshot() }
     }
     next = abs.href
