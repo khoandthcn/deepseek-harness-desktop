@@ -271,6 +271,26 @@ describe('establishSiemSession', () => {
     expect(String(callsOf(f)[2]![1].headers['cookie'])).toContain('gatekeeper_session=gk1')
   })
 
+  it('reports the gatekeeper\'s error and the hop trail when it refuses at the redirect_uri', async () => {
+    // Observed live: IAM hands the gatekeeper its code, and the gatekeeper then
+    // sends the browser to the redirect_uri with `?error=invalid_request`.
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?response_type=code&client_id=siem-iam&state=S1`, 'gatekeeper_session=gk1; Path=/'),
+      redirect(`${SIEM}/oauth/soc_platform_iam/callback?code=IAMCODE&state=S1`),
+      redirect(`${SIEM}/?error=invalid_request&error_description=missing%20state`),
+    ])
+    const failure = establishSiemSession({
+      siemBaseUrl: SIEM, clientId: 'cym_portal', audience: 'cym_dashboard_api', scope: 'read:db_dashboard',
+      cookies: { commonAuthId: 'abc123' }, fetchImpl: f as any,
+    })
+    await expect(failure).rejects.toThrow(/refused.*error=invalid_request.*missing state/)
+    await expect(failure).rejects.toThrow(/\/oauth\/authorize.*→.*iam\.example\/oauth2\/authorize.*→.*\/oauth\/soc_platform_iam\/callback/)
+    // never echoes a code or state value
+    await expect(failure).rejects.not.toThrow(/IAMCODE|S1/)
+    // it stops there instead of fetching the SPA page
+    expect(f).toHaveBeenCalledTimes(3)
+  })
+
   it('fails with a re-login message when the chain lands on the login form', async () => {
     const f = sequenceFetch([
       redirect(`${IAM}/oauth2/authorize?response_type=code&client_id=siem-iam`),

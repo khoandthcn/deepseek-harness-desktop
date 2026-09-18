@@ -292,6 +292,21 @@ function paramNamesOf(u: URL): string {
   return `query=[${q.join(',')}] hash=[${h.join(',')}]${hash ? ' (has fragment)' : ''}`
 }
 
+/** Only these values may be echoed: they are OAuth error codes, never secrets. */
+function oauthErrorOf(u: URL): string | undefined {
+  const error = u.searchParams.get('error')
+  if (!error) return undefined
+  const clean = (v: string | null) => (v ?? '').replace(/[^\w .:,'()-]/g, '').slice(0, 160)
+  const description = clean(u.searchParams.get('error_description'))
+  return `error=${clean(error)}${description ? ` (${description})` : ''}`
+}
+
+/** One hop for the trail: host, path and parameter names — never values. */
+function hopOf(u: URL): string {
+  const names = [...u.searchParams.keys()]
+  return `${u.host}${u.pathname}${names.length > 0 ? `?${names.join(',')}` : ''}`
+}
+
 export async function establishSiemSession(
   opts: SiemSessionOptions,
 ): Promise<{ code: string, cookies: Record<string, string> }> {
@@ -342,7 +357,9 @@ export async function establishSiemSession(
   const redirectOrigin = redirectTarget.origin
   const redirectPath = redirectTarget.pathname || '/'
 
+  const trail: string[] = []
   for (let hop = 0; hop < 8; hop++) {
+    trail.push(hopOf(new URL(next)))
     const res = await request(next)
     if (!REDIRECT_STATUSES.has(res.status)) {
       // A hop answered with a page instead of a Location header. The gatekeeper
@@ -361,7 +378,8 @@ export async function establishSiemSession(
       const fetched = new URL(next)
       throw new SocAuthError(
         `SIEM auth: hop ${hop} (${fetched.origin}${fetched.pathname} ${paramNamesOf(fetched)}) answered HTTP ${res.status} (${res.headers.get('content-type') ?? 'no content-type'}; ${kind}) `
-        + `instead of redirecting; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]; body: "${snippet}"`,
+        + `instead of redirecting; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]; body: "${snippet}"; `
+        + `trail: ${trail.join(' → ')}`,
       )
     }
     const location = res.headers.get('location')
@@ -374,13 +392,23 @@ export async function establishSiemSession(
         'SIEM auth: the SSO session has expired — run soc_login again with a new OTP.',
       )
     }
+    const atRedirect = abs.origin === redirectOrigin && abs.pathname === redirectPath
     const code = codeOnUrl(abs)
-    if (code && abs.origin === redirectOrigin && abs.pathname === redirectPath) {
+    if (code && atRedirect) {
       return { code, cookies: jar.snapshot() }
+    }
+    const refusal = oauthErrorOf(abs)
+    if (refusal !== undefined && atRedirect) {
+      // The gatekeeper answered the app with an OAuth error instead of a code;
+      // the SPA page behind it has nothing more to say.
+      throw new SocAuthError(
+        `SIEM auth: the SIEM gatekeeper refused the authorization with ${refusal}; `
+        + `trail: ${[...trail, hopOf(abs)].join(' → ')}; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]`,
+      )
     }
     next = abs.href
   }
-  throw new SocAuthError('SIEM auth: the SIEM authorize never reached its redirect_uri with a code.')
+  throw new SocAuthError(`SIEM auth: the SIEM authorize never reached its redirect_uri with a code; trail: ${trail.join(' → ')}`)
 }
 
 export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginResult> {
