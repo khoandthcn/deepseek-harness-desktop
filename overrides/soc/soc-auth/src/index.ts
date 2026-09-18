@@ -62,10 +62,6 @@ export interface Config {
   siemBaseUrl?: string | undefined
   /** SIEM OAuth client id used by its own authorize/token; defaults to `cym_portal`. */
   siemClientId?: string | undefined
-  /** SIEM OAuth audience; defaults to `cym_dashboard_api`. */
-  siemAudience?: string | undefined
-  /** SIEM OAuth scope; defaults to `read:db_dashboard`. */
-  siemScope?: string | undefined
   /** SIEM management client id sent by probe tools; defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
   /**
@@ -126,8 +122,6 @@ export function apply(ctx: Context, config: Config | undefined): void {
     edrRedirectUri: checked.edrRedirectUri,
     siemBaseUrl: checked.siemBaseUrl,
     siemClientId: checked.siemClientId,
-    siemAudience: checked.siemAudience,
-    siemScope: checked.siemScope,
     siemMgmtClientId: checked.siemMgmtClientId,
     credentials: async () => ({
       username: await resolveCredential(ctx, usernameRef),

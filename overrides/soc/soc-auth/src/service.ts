@@ -18,7 +18,7 @@
  */
 
 import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
-import { establishAppSession, establishSiemSession, runWso2Login, SocAuthError, type FetchLike } from './wso2.ts'
+import { establishAppSession, establishSiemSession, runWso2Login, setCookiesOf, SiemRefusalError, SocAuthError, type FetchLike } from './wso2.ts'
 
 /** Refresh a little before the real expiry, so an in-flight call cannot race it. */
 const REFRESH_SKEW_MS = 60_000
@@ -29,6 +29,20 @@ const REFRESH_SKEW_MS = 60_000
  * default rather than forever, so a stale token is retried soon.
  */
 const SIEM_DEFAULT_TTL_MS = 300_000
+
+/**
+ * SIEM login, exactly as its SPA does it: the login page's authorize asks for
+ * audience `cym_api` with scope `login`, and the route guard redeems the code
+ * with audience `cym_portal`. Only after that does the gatekeeper hand out
+ * per-API codes; asking for an API audience first answers `invalid_request`.
+ */
+const SIEM_LOGIN_AUDIENCE = 'cym_api'
+const SIEM_LOGIN_SCOPE = 'login'
+const SIEM_PORTAL_AUDIENCE = 'cym_portal'
+
+/** The audience and scope of the gatekeeper's own management API (`/oauth/management/*`). */
+export const SIEM_GATEKEEPER_AUDIENCE = 'gatekeeper'
+export const SIEM_GATEKEEPER_SCOPE = 'login'
 
 /** Keys that must never be echoed back in an error message. */
 const SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'token', 'accessToken'])
@@ -58,10 +72,6 @@ export interface SocAuthServiceOptions {
   siemBaseUrl?: string | undefined
   /** SIEM OAuth client id used by its own authorize/token. Defaults to `cym_portal`. */
   siemClientId?: string | undefined
-  /** SIEM OAuth audience. Defaults to `cym_dashboard_api`. */
-  siemAudience?: string | undefined
-  /** SIEM OAuth scope. Defaults to `read:db_dashboard`. */
-  siemScope?: string | undefined
   /** SIEM management client id sent by probe tools. Defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
   /**
@@ -104,8 +114,6 @@ export class SocAuthService {
    */
   readonly siemBaseUrl: string
   private readonly siemClientId: string
-  private readonly siemAudience: string
-  private readonly siemScope: string
   /**
    * SIEM management client id. Public because the SIEM probe tool sends it as the
    * `client_id` of its permission check, so it is configured once, here.
@@ -141,16 +149,16 @@ export class SocAuthService {
   private edrCookies: Record<string, string> = {}
 
   /**
-   * The SIEM credential, acquired once and cached until it expires. The response
-   * shape is unknown (the capture 401'd), so the token is parsed defensively.
+   * The SIEM gatekeeper session: every cookie the login chain left (SSO, WAF and
+   * `gatekeeper_session`). Per-API authorizations ride it. Null until logged in.
    */
-  private siemCred: { token: string, exp: number } | null = null
-  /** De-duplicates concurrent SIEM token acquisitions. */
-  private siemInflight: Promise<string> | null = null
-  /** The token type from the SIEM token response; `Bearer` unless it says otherwise. */
-  private siemTokenType = 'Bearer'
-  /** Cookies to attach on SIEM API calls: the WAF `D1N` when present. */
-  private siemCookies: Record<string, string> = {}
+  private siemJar: Record<string, string> | null = null
+  /** De-duplicates concurrent SIEM logins. */
+  private siemLoginInflight: Promise<Record<string, string>> | null = null
+  /** SIEM per-API credentials, keyed `audience/scope`, each cached until it expires. */
+  private readonly siemCreds = new Map<string, { token: string, type: string, exp: number }>()
+  /** De-duplicates concurrent acquisitions of one per-API token. */
+  private readonly siemInflight = new Map<string, Promise<string>>()
 
   constructor(opts: SocAuthServiceOptions) {
     this.iamUrl = opts.iamUrl.replace(/\/+$/, '')
@@ -166,8 +174,6 @@ export class SocAuthService {
     this.edrRedirectUri = opts.edrRedirectUri ?? `${this.edrBaseUrl}/v2/callback`
     this.siemBaseUrl = (opts.siemBaseUrl ?? 'https://siem.example.com').replace(/\/+$/, '')
     this.siemClientId = opts.siemClientId ?? 'cym_portal'
-    this.siemAudience = opts.siemAudience ?? 'cym_dashboard_api'
-    this.siemScope = opts.siemScope ?? 'read:db_dashboard'
     this.siemMgmtClientId = opts.siemMgmtClientId ?? 'cym_api'
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
@@ -215,10 +221,10 @@ export class SocAuthService {
     this.edrCred = null
     this.edrInflight = null
     this.edrCookies = {}
-    this.siemCred = null
-    this.siemInflight = null
-    this.siemTokenType = 'Bearer'
-    this.siemCookies = {}
+    this.siemJar = null
+    this.siemLoginInflight = null
+    this.siemCreds.clear()
+    this.siemInflight.clear()
   }
 
   /**
@@ -480,71 +486,137 @@ export class SocAuthService {
   }
 
   /**
-   * The SIEM access token, acquired lazily and cached until `expires_in` (minus
-   * a 60s skew) or, when the response omits it, a short default. Concurrent calls
-   * are de-duplicated. Best-effort: the success response shape is unknown, so the
-   * token is parsed defensively and every failure throws a precise message.
+   * The SIEM token for one API group, acquired lazily and cached per
+   * `audience/scope` until `expires_in` (minus a 60s skew). SIEM has its own
+   * OAuth server with one audience per API group, so a token is per API, as its
+   * SPA's TokenManager keeps them. The first call logs in to SIEM (see
+   * `ensureSiemLogin`). Defaults to the gatekeeper management API.
    */
-  async siemToken(): Promise<string> {
+  async siemToken(audience = SIEM_GATEKEEPER_AUDIENCE, scope = SIEM_GATEKEEPER_SCOPE): Promise<string> {
     if (!this.isAuthenticated()) {
       throw new SocAuthError(
         'SOC auth: not logged in — ask the user for their current OTP and call soc_login first.',
       )
     }
-    const cached = this.siemCred
+    const key = `${audience}/${scope}`
+    const cached = this.siemCreds.get(key)
     if (cached && this.now() < cached.exp - REFRESH_SKEW_MS) {
       return cached.token
     }
-    if (!this.siemInflight) {
-      this.siemInflight = this.exchangeSiemToken().finally(() => {
-        this.siemInflight = null
+    let inflight = this.siemInflight.get(key)
+    if (!inflight) {
+      inflight = this.exchangeSiemToken(audience, scope).finally(() => {
+        this.siemInflight.delete(key)
       })
+      this.siemInflight.set(key, inflight)
     }
-    return this.siemInflight
+    return inflight
   }
 
   /**
-   * Headers for a SIEM request. The credential carrier is UNKNOWN — the observed
-   * capture 401'd before it could show one. SIEM's audience is a dashboard API
-   * and its SPA is an OAuth client, so we DEFAULT to a Bearer header. If a live
-   * test 401s with this carrier, the alternative to try is a cookie (carry the
-   * token in a cookie the SPA would set) — switch it here. The WAF `D1N` cookie
-   * is attached when present.
+   * Headers for a SIEM API request: the per-API token as a Bearer (its SPA's
+   * APIClient sends `Authorization: Bearer`), plus the WAF `D1N` cookie.
    */
-  siemAuthHeaders(): Record<string, string> {
+  siemAuthHeaders(audience = SIEM_GATEKEEPER_AUDIENCE, scope = SIEM_GATEKEEPER_SCOPE): Record<string, string> {
     const headers: Record<string, string> = {}
-    const token = this.siemCred?.token
-    if (token) headers.Authorization = `${this.siemTokenType} ${token}`
-    const cookie = Object.entries(this.siemCookies).map(([k, v]) => `${k}=${v}`).join('; ')
-    if (cookie) headers.Cookie = cookie
+    const cred = this.siemCreds.get(`${audience}/${scope}`)
+    if (cred) headers.Authorization = `${cred.type} ${cred.token}`
+    const d1n = this.siemJar?.[D1N_COOKIE] ?? this.cookies[D1N_COOKIE]
+    if (d1n !== undefined) headers.Cookie = `${D1N_COOKIE}=${d1n}`
     return headers
   }
 
-  private async exchangeSiemToken(): Promise<string> {
+  /**
+   * Log in to SIEM once per SOC session: authorize `cym_api`/`login` on the SSO
+   * session, redeem the code with audience `cym_portal`, and keep the cookie
+   * jar — the gatekeeper's session in it is what later per-API authorizations
+   * are granted on.
+   */
+  private async ensureSiemLogin(doFetch: FetchLike): Promise<Record<string, string>> {
+    if (this.siemJar) return this.siemJar
+    if (!this.siemLoginInflight) {
+      this.siemLoginInflight = (async () => {
+        const { code, cookies } = await establishSiemSession({
+          siemBaseUrl: this.siemBaseUrl,
+          clientId: this.siemClientId,
+          audience: SIEM_LOGIN_AUDIENCE,
+          scope: SIEM_LOGIN_SCOPE,
+          cookies: this.cookies,
+          fetchImpl: this.fetchImpl,
+        }).catch((error: unknown) => {
+          if (error instanceof SiemRefusalError) {
+            throw new SocAuthError(
+              `SIEM auth: SIEM refused the login itself (${error.oauthError}) — the account may not be enabled on SIEM. ${error.message}`,
+            )
+          }
+          throw error
+        })
+        const { jar } = await this.redeemSiemCode(doFetch, code, SIEM_PORTAL_AUDIENCE, cookies, 'login')
+        this.siemJar = jar
+        return jar
+      })().finally(() => {
+        this.siemLoginInflight = null
+      })
+    }
+    return this.siemLoginInflight
+  }
+
+  private async exchangeSiemToken(audience: string, scope: string): Promise<string> {
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
-    // SIEM has its OWN OAuth server: run its authorize on the SSO login for a
-    // code, then exchange the code at its token endpoint.
+    const jar = await this.ensureSiemLogin(doFetch)
     const { code, cookies } = await establishSiemSession({
       siemBaseUrl: this.siemBaseUrl,
       clientId: this.siemClientId,
-      audience: this.siemAudience,
-      scope: this.siemScope,
-      cookies: this.cookies,
+      audience,
+      scope,
+      cookies: jar,
       fetchImpl: this.fetchImpl,
+    }).catch((error: unknown) => {
+      if (error instanceof SiemRefusalError) {
+        throw new SocAuthError(
+          `SIEM auth: SIEM denied scope "${scope}" on audience "${audience}" (${error.oauthError}) — `
+          + 'the account most likely lacks that SIEM permission; siem_check_access lists what it has.',
+        )
+      }
+      throw error
     })
+    const { payload, jar: after } = await this.redeemSiemCode(doFetch, code, audience, cookies, `${audience}/${scope}`)
+    this.siemJar = after
+    const token = payload.access_token as string
+    const type = typeof payload?.token_type === 'string' && payload.token_type.length > 0
+      ? payload.token_type
+      : 'Bearer'
+    const expiresIn = Number(payload?.expires_in)
+    const ttlMs = Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : SIEM_DEFAULT_TTL_MS
+    this.siemCreds.set(`${audience}/${scope}`, { token, type, exp: this.now() + ttlMs })
+    return token
+  }
+
+  /**
+   * POST a SIEM authorization code to `/oauth/token` for `audience`, carrying the
+   * chain's cookies, and return the parsed body (which must hold an
+   * `access_token`) with the cookie jar to keep.
+   */
+  private async redeemSiemCode(
+    doFetch: FetchLike,
+    code: string,
+    audience: string,
+    cookies: Record<string, string>,
+    what: string,
+  ): Promise<{ payload: any, jar: Record<string, string> }> {
     const url = `${this.siemBaseUrl}/oauth/token`
     const body = new URLSearchParams({
       code,
       client_id: this.siemClientId,
       grant_type: 'authorization_code',
       redirect_uri: this.siemBaseUrl,
-      audience: this.siemAudience,
+      audience,
     }).toString()
-    // The token POST must carry the session cookies (commonAuthId, D1N) from the
-    // authorize step; a cookie-less request is answered by the WAF's D1N
-    // bootstrap page (HTTP 200 HTML), not the token. If that page comes back
-    // anyway, adopt its D1N and reissue once.
-    const post = async (jar: Record<string, string>, afterBootstrap = false): Promise<Response> => {
+    // The token POST must carry the session cookies; a cookie-less request is
+    // answered by the WAF's D1N bootstrap page (HTTP 200 HTML), not the token.
+    // If that page comes back anyway, adopt its D1N and reissue once.
+    let jar = { ...cookies }
+    const post = async (afterBootstrap = false): Promise<Response> => {
       const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ')
       let response: Response
       try {
@@ -558,26 +630,30 @@ export class SocAuthService {
       }
       if (!afterBootstrap && response.status === 200) {
         const d1n = parseD1nBootstrap(await response.clone().text())
-        if (d1n !== undefined) return post({ ...jar, [D1N_COOKIE]: d1n }, true)
+        if (d1n !== undefined) {
+          jar = { ...jar, [D1N_COOKIE]: d1n }
+          return post(true)
+        }
       }
       return response
     }
-    const res = await post(cookies)
+    const res = await post()
+    jar = { ...jar, ...setCookiesOf(res) }
 
     if (res.status !== 200) {
       // Never echo the code or the body beyond a short `message` field.
       const message = await res.text().then((text) => {
         try {
-          const body = JSON.parse(text)
-          if (typeof body?.message === 'string') return body.message
-          if (typeof body?.error === 'string') return body.error
+          const parsed = JSON.parse(text)
+          if (typeof parsed?.message === 'string') return parsed.message
+          if (typeof parsed?.error === 'string') return parsed.error
           return ''
         } catch {
           return ''
         }
       }).catch(() => '')
       throw new SocAuthError(
-        `SIEM auth: the SIEM token endpoint returned HTTP ${res.status}${message ? `: ${message}` : ''}`,
+        `SIEM auth: the SIEM token endpoint returned HTTP ${res.status}${message ? `: ${message}` : ''} (${what}).`,
       )
     }
 
@@ -586,29 +662,17 @@ export class SocAuthService {
       payload = await res.json()
     } catch (cause) {
       throw new SocAuthError(
-        `SOC auth: the SIEM token exchange returned a non-JSON body (HTTP ${res.status}) — likely blocked by the WAF or a malformed response.`,
+        `SOC auth: the SIEM token exchange returned a non-JSON body (HTTP ${res.status}) — likely blocked by the WAF or a malformed response (${what}).`,
         { cause },
       )
     }
-
-    // Success shape unknown: accept the token under any of the plausible keys.
-    const token = payload?.access_token ?? payload?.token ?? payload?.accessToken
+    const token = payload?.access_token
     if (typeof token !== 'string' || token.length === 0) {
       throw new SocAuthError(
-        `SOC auth: the SIEM token exchange returned no access token (response keys: ${safeKeys(payload)}).`,
+        `SOC auth: the SIEM token exchange returned no access token (${what}; response keys: ${safeKeys(payload)}).`,
       )
     }
-
-    this.siemTokenType = typeof payload?.token_type === 'string' && payload.token_type.length > 0
-      ? payload.token_type
-      : 'Bearer'
-    const expiresIn = Number(payload?.expires_in)
-    const ttlMs = Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : SIEM_DEFAULT_TTL_MS
-    this.siemCred = { token, exp: this.now() + ttlMs }
-    const jar: Record<string, string> = {}
-    if (cookies.D1N !== undefined) jar.D1N = cookies.D1N
-    this.siemCookies = jar
-    return token
+    return { payload, jar }
   }
 
   private async exchangeSoarBearer(scope: string): Promise<string> {

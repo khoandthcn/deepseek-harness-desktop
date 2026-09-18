@@ -82,6 +82,16 @@ export const SIEM_PATHS = {
   userRolePerm: '/oauth/management/get_user_role_perm',
 } as const
 
+/**
+ * The SIEM token each path needs. SIEM's OAuth server issues one token per API
+ * group (audience) and scope; this mirrors its SPA's per-API TokenManager
+ * configuration, where `/oauth/management/get_user_role_perm` sits under the
+ * `gatekeeper` audience with scope `login`.
+ */
+export const SIEM_TOKEN_FOR: Readonly<Record<string, { audience: string, scope: string }>> = {
+  [SIEM_PATHS.userRolePerm]: { audience: 'gatekeeper', scope: 'login' },
+}
+
 /** Raised when the SIEM permission payload does not match the expected shape. */
 export class SiemContractError extends Error {
   constructor(message: string) {

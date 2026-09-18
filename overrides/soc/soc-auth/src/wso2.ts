@@ -17,6 +17,18 @@ export class SocAuthError extends Error {
   }
 }
 
+/**
+ * The SIEM gatekeeper answered the app's redirect_uri with an OAuth error rather
+ * than a code. For a per-API token this is how it says the account lacks the
+ * requested scope (its SPA treats it the same way: back to the login page).
+ */
+export class SiemRefusalError extends SocAuthError {
+  constructor(message: string, readonly oauthError: string) {
+    super(message)
+    this.name = 'SiemRefusalError'
+  }
+}
+
 export type FetchLike = (input: string, init?: any) => Promise<Response>
 
 import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
@@ -104,6 +116,13 @@ class CookieJar {
   snapshot(): Record<string, string> {
     return Object.fromEntries(this.jar)
   }
+}
+
+/** The `name=value` pairs a response sets, as a record (attributes dropped). */
+export function setCookiesOf(res: Response): Record<string, string> {
+  const jar = new CookieJar()
+  jar.absorb(res)
+  return jar.snapshot()
 }
 
 function readSetCookies(res: Response): string[] {
@@ -221,11 +240,14 @@ export interface SiemSessionOptions {
   siemBaseUrl: string
   /** SIEM's own OAuth client id (`cym_portal`). */
   clientId: string
-  /** SIEM's OAuth audience (`cym_dashboard_api`). */
+  /** SIEM OAuth audience: `cym_api` to log in, then one per API group (`gatekeeper`, `cym_alert_api`, …). */
   audience: string
-  /** SIEM's OAuth scope (`read:db_dashboard`). */
+  /** SIEM OAuth scope(s), space-separated: `login` to log in, then the API's own. */
   scope: string
-  /** Cookies from a completed WSO2 login: the SSO session (`commonAuthId`) and `D1N`. */
+  /**
+   * Cookies to ride the chain: the SSO session (`commonAuthId`) and `D1N` from the
+   * WSO2 login, plus the gatekeeper's own session once SIEM login has completed.
+   */
   cookies: Record<string, string>
   fetchImpl?: FetchLike | undefined
 }
@@ -401,9 +423,10 @@ export async function establishSiemSession(
     if (refusal !== undefined && atRedirect) {
       // The gatekeeper answered the app with an OAuth error instead of a code;
       // the SPA page behind it has nothing more to say.
-      throw new SocAuthError(
+      throw new SiemRefusalError(
         `SIEM auth: the SIEM gatekeeper refused the authorization with ${refusal}; `
         + `trail: ${[...trail, hopOf(abs)].join(' → ')}; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]`,
+        refusal,
       )
     }
     next = abs.href

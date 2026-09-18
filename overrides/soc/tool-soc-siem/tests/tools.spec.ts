@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createSiemToolDefs, SIEM_PATHS, type SiemHttpLike } from '../src/tools.ts'
+import { createSiemToolDefs, SIEM_PATHS, SIEM_TOKEN_FOR, type SiemHttpLike } from '../src/tools.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
  * positional args the stubs do not declare, so narrow once here. */
@@ -89,5 +89,14 @@ describe('authenticated happy path', () => {
   it('rejects a non-object payload with a clear contract error', async () => {
     const { byName } = defs(true, { [SIEM_PATHS.userRolePerm]: 'nope' })
     await expect(byName('siem_check_access').execute({})).rejects.toThrow(/SIEM access/i)
+  })
+})
+
+describe('SIEM_TOKEN_FOR', () => {
+  it('routes every SIEM path to the audience/scope its SPA uses', () => {
+    for (const path of Object.values(SIEM_PATHS)) {
+      expect(SIEM_TOKEN_FOR[path], path).toBeDefined()
+    }
+    expect(SIEM_TOKEN_FOR[SIEM_PATHS.userRolePerm]).toEqual({ audience: 'gatekeeper', scope: 'login' })
   })
 })

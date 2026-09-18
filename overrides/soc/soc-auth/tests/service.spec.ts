@@ -438,27 +438,42 @@ describe('SocAuthService.edrAuthHeaders', () => {
 const SIEM = 'https://siem.example'
 
 /**
- * A fetch stub for the SIEM flow. SIEM has its OWN OAuth server (not the WSO2
- * per-scope authorize nor the EDR token exchange):
+ * A fetch stub for SIEM's own OAuth server, modelled on its SPA:
  *  - the WSO2 login sequence;
- *  - SIEM's own authorize on its host (carries the SSO cookie) → `${SIEM}?code=…`;
- *  - a caller-supplied queue for `${SIEM}/oauth/token`.
+ *  - `${SIEM}/oauth/authorize`: audience `cym_api`/scope `login` on the SSO
+ *    session logs in (sets `gatekeeper_session`, code LOGINCODE); any other
+ *    audience answers `?error=invalid_request` unless the gatekeeper session is
+ *    present and the audience is not in `denied`, then code `API:<audience>`;
+ *  - `${SIEM}/oauth/token`: audience `cym_portal` gets the portal token, others
+ *    shift from `apiTokens`.
  */
-function stubFetchSiem(tokenResponses: Response[], wso2: Response[] = wso2HappyPath()) {
+function stubFetchSiem(
+  apiTokens: Response[],
+  opts: { denied?: string[], portal?: Response, wso2?: Response[] } = {},
+) {
   let iam = 0
   let tok = 0
+  const wso2 = opts.wso2 ?? wso2HappyPath()
   const cookieOf = (init: any): string => String(init?.headers?.cookie ?? '')
   const fn = vi.fn(async (url: string, init?: any) => {
     const u = String(url)
     if (u.startsWith(`${SIEM}/oauth/token`)) {
-      const res = tokenResponses[tok++]
+      const audience = new URLSearchParams(String(init?.body)).get('audience')
+      if (audience === 'cym_portal') return opts.portal ?? json(200, { access_token: 'PORTAL', expires_in: 3600 })
+      const res = apiTokens[tok++]
       if (!res) throw new Error('unexpected extra SIEM token call')
       return res
     }
-    // SIEM's own authorize: rides the SSO cookie, 302s to its redirect_uri (the
-    // SIEM host itself) carrying the code.
-    if (u.startsWith(`${SIEM}/oauth/authorize`) && cookieOf(init).includes('commonAuthId')) {
-      return redirect(`${SIEM}?code=SIEMCODE`)
+    if (u.startsWith(`${SIEM}/oauth/authorize`)) {
+      const q = new URL(u).searchParams
+      const cookie = cookieOf(init)
+      if (q.get('audience') === 'cym_api' && q.get('scope') === 'login' && cookie.includes('commonAuthId')) {
+        return redirect(`${SIEM}/?code=LOGINCODE`, 'gatekeeper_session=gk1; Path=/')
+      }
+      if (cookie.includes('gatekeeper_session=gk1') && !(opts.denied ?? []).includes(String(q.get('audience')))) {
+        return redirect(`${SIEM}/?code=API:${q.get('audience')}`)
+      }
+      return redirect(`${SIEM}/?error=invalid_request`)
     }
     const res = wso2[iam++]
     if (!res) throw new Error('unexpected extra WSO2 fetch call')
@@ -467,9 +482,18 @@ function stubFetchSiem(tokenResponses: Response[], wso2: Response[] = wso2HappyP
   return fn
 }
 
-/** The `${SIEM}/oauth/token` calls alone. */
-function siemCalls(f: ReturnType<typeof stubFetchSiem>) {
-  return callsOf(f).filter((c) => String(c[0]).startsWith(`${SIEM}/oauth/token`))
+/** The `${SIEM}/oauth/token` calls, as parsed form bodies. */
+function siemTokenBodies(f: ReturnType<typeof stubFetchSiem>) {
+  return callsOf(f)
+    .filter((c) => String(c[0]).startsWith(`${SIEM}/oauth/token`))
+    .map((c) => new URLSearchParams(String((c[1] as any).body)))
+}
+
+/** The `${SIEM}/oauth/authorize` calls, as their query parameters. */
+function siemAuthorizes(f: ReturnType<typeof stubFetchSiem>) {
+  return callsOf(f)
+    .filter((c) => String(c[0]).startsWith(`${SIEM}/oauth/authorize`))
+    .map((c) => new URL(String(c[0])).searchParams)
 }
 
 function makeSiemService(fetchImpl: any, now: () => number = () => 1_000_000) {
@@ -483,55 +507,83 @@ describe('SocAuthService.siemToken', () => {
     expect(err.message).toMatch(/not logged in/i)
   })
 
-  it('runs SIEM authorize then token exchange once, and caches the token', async () => {
-    const f = stubFetchSiem([json(200, { access_token: 'SIEM-1', token_type: 'Bearer', expires_in: 3600 })])
+  it('logs in as the SPA does, then fetches the gatekeeper token, and caches both', async () => {
+    const f = stubFetchSiem([json(200, { access_token: 'GK-1', token_type: 'Bearer', expires_in: 3600 })])
     const svc = makeSiemService(f)
     await svc.login(OTP)
 
-    expect(await svc.siemToken()).toBe('SIEM-1')
-    expect(await svc.siemToken()).toBe('SIEM-1')
-    expect(siemCalls(f)).toHaveLength(1)
+    expect(await svc.siemToken()).toBe('GK-1')
+    expect(await svc.siemToken('gatekeeper', 'login')).toBe('GK-1')
 
-    const [url, init] = siemCalls(f)[0] as [string, any]
-    expect(url).toBe(`${SIEM}/oauth/token`)
-    expect(init.method).toBe('POST')
-    expect(String(init.headers['content-type'])).toMatch(/application\/x-www-form-urlencoded/)
-    const body = new URLSearchParams(String(init.body))
-    expect(body.get('code')).toBe('SIEMCODE')
-    expect(body.get('client_id')).toBe('cym_portal')
-    expect(body.get('grant_type')).toBe('authorization_code')
-    expect(body.get('redirect_uri')).toBe(SIEM)
-    expect(body.get('audience')).toBe('cym_dashboard_api')
+    // login: cym_api/login, then the per-API authorize for gatekeeper/login
+    const authorizes = siemAuthorizes(f)
+    expect(authorizes.map((q) => `${q.get('audience')}/${q.get('scope')}`)).toEqual(['cym_api/login', 'gatekeeper/login'])
+    expect(authorizes.every((q) => q.get('client_id') === 'cym_portal' && q.get('redirect_uri') === SIEM)).toBe(true)
+
+    // the login code is redeemed for cym_portal, the API code for its own audience
+    const bodies = siemTokenBodies(f)
+    expect(bodies.map((b) => `${b.get('audience')}:${b.get('code')}`)).toEqual(['cym_portal:LOGINCODE', 'gatekeeper:API:gatekeeper'])
+    expect(bodies.every((b) => b.get('client_id') === 'cym_portal' && b.get('grant_type') === 'authorization_code')).toBe(true)
+
+    // the per-API authorize rode the gatekeeper session the login left
+    const apiAuthorize = callsOf(f).filter((c) => String(c[0]).includes('audience=gatekeeper'))[0]!
+    expect(String((apiAuthorize[1] as any).headers.cookie)).toContain('gatekeeper_session=gk1')
   })
 
-  it('parses the token defensively from `token` or `accessToken`', async () => {
-    const fromToken = makeSiemService(stubFetchSiem([json(200, { token: 'SIEM-TK' })]))
-    await fromToken.login(OTP)
-    expect(await fromToken.siemToken()).toBe('SIEM-TK')
+  it('logs in once and keeps one token per audience/scope', async () => {
+    const f = stubFetchSiem([
+      json(200, { access_token: 'GK-1', expires_in: 3600 }),
+      json(200, { access_token: 'ALERT-1', expires_in: 3600 }),
+    ])
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
 
-    const fromCamel = makeSiemService(stubFetchSiem([json(200, { accessToken: 'SIEM-CAMEL' })]))
-    await fromCamel.login(OTP)
-    expect(await fromCamel.siemToken()).toBe('SIEM-CAMEL')
+    expect(await svc.siemToken('gatekeeper', 'login')).toBe('GK-1')
+    expect(await svc.siemToken('cym_alert_api', 'view:alert')).toBe('ALERT-1')
+    expect(siemTokenBodies(f).filter((b) => b.get('audience') === 'cym_portal')).toHaveLength(1)
+    expect(svc.siemAuthHeaders('cym_alert_api', 'view:alert').Authorization).toBe('Bearer ALERT-1')
+    expect(svc.siemAuthHeaders('gatekeeper', 'login').Authorization).toBe('Bearer GK-1')
+  })
+
+  it('names the scope and audience when SIEM denies an API token', async () => {
+    const f = stubFetchSiem([], { denied: ['cym_dashboard_api'] })
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.siemToken('cym_dashboard_api', 'read:db_dashboard'))
+    expect(err.message).toMatch(/denied scope "read:db_dashboard" on audience "cym_dashboard_api"/)
+    expect(err.message).toContain('invalid_request')
+    expect(err.message).toMatch(/permission/)
+  })
+
+  it('reports a refused SIEM login as such', async () => {
+    // No SSO cookie reaches the login authorize: the gatekeeper refuses it.
+    const wso2 = wso2HappyPath()
+    const f = stubFetchSiem([], { wso2 })
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+    ;(svc as any).cookies = {}
+
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/refused the login itself/)
   })
 
   it('caches with a short default TTL when the response omits expires_in', async () => {
     const f = stubFetchSiem([
-      json(200, { access_token: 'SIEM-1' }),
-      json(200, { access_token: 'SIEM-2' }),
+      json(200, { access_token: 'GK-1' }),
+      json(200, { access_token: 'GK-2' }),
     ])
     let clock = 1_000_000
     const svc = makeSiemService(f, () => clock)
     await svc.login(OTP)
 
-    expect(await svc.siemToken()).toBe('SIEM-1')
-    // Inside the 300s default (minus 60s skew): still cached.
+    expect(await svc.siemToken()).toBe('GK-1')
     clock += 200 * 1000
-    expect(await svc.siemToken()).toBe('SIEM-1')
-    expect(siemCalls(f)).toHaveLength(1)
-    // Past the default TTL: a fresh acquisition.
+    expect(await svc.siemToken()).toBe('GK-1')
     clock += 200 * 1000
-    expect(await svc.siemToken()).toBe('SIEM-2')
-    expect(siemCalls(f)).toHaveLength(2)
+    expect(await svc.siemToken()).toBe('GK-2')
+    // the SIEM login itself is not repeated
+    expect(siemTokenBodies(f).filter((b) => b.get('audience') === 'cym_portal')).toHaveLength(1)
   })
 
   it('reports the SIEM token endpoint status and message on a non-200, hiding secrets', async () => {
@@ -541,6 +593,15 @@ describe('SocAuthService.siemToken', () => {
     const err = await expectNoSecrets(svc.siemToken())
     expect(err.message).toMatch(/SIEM token endpoint returned HTTP 401/i)
     expect(err.message).toContain('invalid_grant')
+    expect(err.message).toContain('gatekeeper/login')
+  })
+
+  it('reports a failed login redemption with its own label', async () => {
+    const svc = makeSiemService(stubFetchSiem([], { portal: json(401, { error: 'invalid_grant' }) }))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/HTTP 401: invalid_grant \(login\)/)
   })
 
   it('rejects listing only safe keys when no token is present', async () => {
@@ -555,8 +616,6 @@ describe('SocAuthService.siemToken', () => {
   })
 
   it('throws the SSO-expired error when SIEM authorize bounces to the login form', async () => {
-    // The WSO2 login (IAM host) still succeeds; only the later SIEM authorize
-    // bounces to the login form, i.e. the SSO session for SIEM is gone.
     let iam = 0
     const wso2 = wso2HappyPath()
     const f = vi.fn(async (url: string) => {
@@ -574,18 +633,32 @@ describe('SocAuthService.siemToken', () => {
     const err = await expectNoSecrets(svc.siemToken())
     expect(err.message).toMatch(/SSO session has expired|soc_login/i)
   })
+
+  it('forgets the SIEM login on invalidate', async () => {
+    const f = stubFetchSiem([
+      json(200, { access_token: 'GK-1', expires_in: 3600 }),
+      json(200, { access_token: 'GK-2', expires_in: 3600 }),
+    ], { wso2: [...wso2HappyPath(), ...wso2HappyPath()] })
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+    await svc.siemToken()
+    svc.invalidate()
+    await svc.login(OTP)
+    expect(await svc.siemToken()).toBe('GK-2')
+    expect(siemTokenBodies(f).filter((b) => b.get('audience') === 'cym_portal')).toHaveLength(2)
+  })
 })
 
 describe('SocAuthService.siemAuthHeaders', () => {
-  it('carries a Bearer token plus the WAF D1N cookie', async () => {
-    const f = stubFetchSiem([json(200, { access_token: 'SIEM-1', token_type: 'Bearer', expires_in: 3600 })])
+  it('carries the per-API Bearer plus the WAF D1N cookie', async () => {
+    const f = stubFetchSiem([json(200, { access_token: 'GK-1', token_type: 'Bearer', expires_in: 3600 })])
     const svc = makeSiemService(f)
     await svc.login(OTP)
     await svc.siemToken()
 
     const headers = svc.siemAuthHeaders()
-    expect(headers.Authorization).toBe('Bearer SIEM-1')
-    expect(headers.Cookie).toContain('D1N=waf-cookie')
+    expect(headers.Authorization).toBe('Bearer GK-1')
+    expect(headers.Cookie).toBe('D1N=waf-cookie')
   })
 
   it('returns no Authorization until a token has been fetched', async () => {

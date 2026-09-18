@@ -7,8 +7,8 @@
  * `ctx.tools`.
  *
  * SIEM reuses the SOC session that `soc_login` (from `tool-soc-soar`)
- * establishes, so this plugin registers no login tool. `siemToken()` is acquired
- * lazily on the first request through this client.
+ * establishes, so this plugin registers no login tool. The first request logs
+ * in to SIEM, then each API group's token is acquired lazily (`SIEM_TOKEN_FOR`).
  *
  * @module @deepseek-ai/dsh-tool-soc-siem
  */
@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { SocHttp } from '@deepseek-ai/dsh-soc-client'
 import type {} from '@deepseek-ai/dsh-soc-auth'
-import { createSiemToolDefs, type SiemHttpLike, type SiemToolDef } from './tools.ts'
+import { createSiemToolDefs, SIEM_TOKEN_FOR, type SiemHttpLike, type SiemToolDef } from './tools.ts'
 
 export * from './tools.ts'
 
@@ -56,14 +56,25 @@ export function apply(ctx: Context, config: Config = {}): void {
   // Configured once, on soc-auth.
   const siemBaseUrl = config.siemBaseUrl ?? auth.siemBaseUrl
 
-  // One SIEM token is global for every endpoint, so a single client carries the
-  // credential; `siemAuthHeaders()` reads the current header on each request.
-  const http = new SocHttp(siemBaseUrl, { authHeaders: () => auth.siemAuthHeaders() })
+  // SIEM issues one token per API group (audience) and scope, so each request
+  // is routed through a client carrying that path's token.
+  const clients = new Map<string, SocHttp>()
+  const clientFor = (audience: string, scope: string): SocHttp => {
+    const key = `${audience}/${scope}`
+    let client = clients.get(key)
+    if (!client) {
+      client = new SocHttp(siemBaseUrl, { authHeaders: () => auth.siemAuthHeaders(audience, scope) })
+      clients.set(key, client)
+    }
+    return client
+  }
 
   const siemHttp: SiemHttpLike = {
     async postJson<T>(path: string, body: unknown): Promise<T> {
-      await auth.siemToken()
-      return http.postJson<T>(path, body)
+      const route = SIEM_TOKEN_FOR[path]
+      if (!route) throw new Error(`tool-soc-siem: no SIEM token route for ${path}`)
+      await auth.siemToken(route.audience, route.scope)
+      return clientFor(route.audience, route.scope).postJson<T>(path, body)
     },
   }
 
