@@ -303,3 +303,30 @@ describe('establishSiemSession: HTML redirects and diagnostics', () => {
     await expect(establishSiemSession({ ...opts, fetchImpl: f as any })).rejects.toThrow(/hop 1 .*HTTP 200.*login form.*cookies held/)
   })
 })
+
+describe('establishSiemSession: hash-routed redirect_uri', () => {
+  const SIEM = 'https://siem.example'
+  const opts = { siemBaseUrl: SIEM, clientId: 'cym_portal', audience: 'cym_dashboard_api', scope: 'read:db_dashboard', cookies: { commonAuthId: 'abc' } }
+
+  it('reads the code from the fragment when the SPA is hash-routed', async () => {
+    // The gatekeeper lands on the SPA root with the code after `#`, where
+    // URL.searchParams cannot see it; fetching that URL would just return the app.
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?client_id=siem-iam`),
+      redirect(`${SIEM}/oauth/soc_platform_iam/callback?code=IAMCODE&state=s`),
+      redirect(`${SIEM}/#/login?state=s&code=APPCODE`),
+    ])
+    const { code } = await establishSiemSession({ ...opts, fetchImpl: f as any })
+    expect(code).toBe('APPCODE')
+    expect(f).toHaveBeenCalledTimes(3)
+  })
+
+  it('still ignores the gatekeeper callback even when its code is the only one', async () => {
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?client_id=siem-iam`),
+      redirect(`${SIEM}/oauth/soc_platform_iam/callback?code=IAMCODE`),
+      new Response('<html><title>SIEM console</title></html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ])
+    await expect(establishSiemSession({ ...opts, fetchImpl: f as any })).rejects.toThrow(/hop 2 .*query=\[code\]/)
+  })
+})

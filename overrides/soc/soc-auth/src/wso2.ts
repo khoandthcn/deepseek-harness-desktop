@@ -270,6 +270,28 @@ function extractCodeFromHtml(body: string, origin: string, path: string): string
   return m?.[1]
 }
 
+/**
+ * The authorization code on a redirect target, whether it rides the query
+ * (`/?code=…`) or the fragment of a hash-routed SPA (`/#/route?code=…`,
+ * `/#code=…`). `URL.searchParams` never sees the fragment, so look there too.
+ */
+function codeOnUrl(u: URL): string | null {
+  const fromQuery = u.searchParams.get('code')
+  if (fromQuery) return fromQuery
+  const hash = u.hash.startsWith('#') ? u.hash.slice(1) : u.hash
+  const afterQ = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : hash
+  return new URLSearchParams(afterQ).get('code')
+}
+
+/** Query + fragment parameter NAMES of a URL, for diagnostics — never values. */
+function paramNamesOf(u: URL): string {
+  const q = [...u.searchParams.keys()]
+  const hash = u.hash.startsWith('#') ? u.hash.slice(1) : u.hash
+  const afterQ = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : hash
+  const h = hash ? [...new URLSearchParams(afterQ).keys()] : []
+  return `query=[${q.join(',')}] hash=[${h.join(',')}]${hash ? ' (has fragment)' : ''}`
+}
+
 export async function establishSiemSession(
   opts: SiemSessionOptions,
 ): Promise<{ code: string, cookies: Record<string, string> }> {
@@ -336,8 +358,9 @@ export async function establishSiemSession(
         : /^\s*\{/.test(body) ? 'json'
         : 'html'
       const snippet = body.replace(/\s+/g, ' ').replace(/[?&](code|state|session_state)=[^&"'\s]+/g, '$1=<redacted>').slice(0, 160)
+      const fetched = new URL(next)
       throw new SocAuthError(
-        `SIEM auth: hop ${hop} (${redactUrl(next)}) answered HTTP ${res.status} (${res.headers.get('content-type') ?? 'no content-type'}; ${kind}) `
+        `SIEM auth: hop ${hop} (${fetched.origin}${fetched.pathname} ${paramNamesOf(fetched)}) answered HTTP ${res.status} (${res.headers.get('content-type') ?? 'no content-type'}; ${kind}) `
         + `instead of redirecting; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]; body: "${snippet}"`,
       )
     }
@@ -351,7 +374,7 @@ export async function establishSiemSession(
         'SIEM auth: the SSO session has expired — run soc_login again with a new OTP.',
       )
     }
-    const code = abs.searchParams.get('code')
+    const code = codeOnUrl(abs)
     if (code && abs.origin === redirectOrigin && abs.pathname === redirectPath) {
       return { code, cookies: jar.snapshot() }
     }
