@@ -30,6 +30,8 @@ export DSH_DESKTOP_AUTO_UPDATE_ENV=test
 export DOWNLOAD_TEST_ORIGIN=https://github.com
 
 cd "$WORK"
-corepack pnpm install --frozen-lockfile
+# Not frozen: the patch declares the SOC workspace packages, which the upstream
+# lockfile cannot know about (workspace links only).
+corepack pnpm install
 corepack pnpm run "package:desktop:$SCRIPT"
 ls -la "apps/desktop/.desktop-build/targets/$TARGET/artifacts"
