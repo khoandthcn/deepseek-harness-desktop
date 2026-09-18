@@ -13,10 +13,13 @@
 //      - onboarding copy (English + Chinese)
 //      - Desktop default agent preset = standard-brave
 // 3. The Brave Search web-search preset, generated into the shipped preset root.
-// 4. The SOC native packages (overrides/soc/* → packages/soc/*) and the
+// 4. A per-build version stamp on the `dsh` family, so every build installs its
+//    own Desktop profile (DSH_SOC_BUILD_STAMP fixes it; default: build time).
+// 5. The SOC native packages (overrides/soc/* → packages/soc/*) and the
 //    `soc-cloud` preset that mounts them.
+// 6. The SOC Cloud credentials card in Settings → Plugins.
 import { createHash } from 'node:crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { PRESET_ID, writeSearchPreset } from './make-search-preset.mjs'
 import { PRESET_ID as SOC_PRESET_ID, writeSocPreset } from './make-soc-preset.mjs'
@@ -230,7 +233,48 @@ if (overlayText.includes(`default: ${PRESET_ID}`)) {
   console.log(`patched: ${overlay}`)
 }
 
-// ── 4. SOC native packages + the soc-cloud preset that mounts them ───────────
+// ── 4. per-build family version ──────────────────────────────────────────────
+// Desktop reinstalls its profile only when the seed's version differs from the
+// installed one (`applyRelease` compares desktop-release.json, the installed
+// `@deepseek-ai/dsh` and the host package against Electron's own version).
+// Every build of one upstream ref carries the same version, so a fresh .dmg
+// kept running the previous build's profile until `~/.dsh/profiles/desktop`
+// was removed by hand. Stamp a prerelease identifier onto the whole `dsh`
+// family (every manifest carrying the family version: root, apps, packages —
+// never `vendor/`, which keeps its own version lines) so each build installs
+// itself. `DSH_SOC_BUILD_STAMP` fixes the stamp (CI passes its run number);
+// a local build takes the build time.
+const STAMP_SUFFIX = /\.soc\.[0-9A-Za-z]+$/
+const readVersion = path => JSON.parse(readFileSync(path, 'utf8')).version
+const checkoutVersion = readVersion(join(root, 'packages', 'core', 'tools', 'package.json'))
+const baseVersion = checkoutVersion.replace(STAMP_SUFFIX, '')
+const stamp = process.env.DSH_SOC_BUILD_STAMP ?? String(Math.floor(Date.now() / 1000))
+if (!/^[0-9A-Za-z]+$/.test(stamp)) {
+  throw new Error(`patch-upstream: DSH_SOC_BUILD_STAMP must be a semver prerelease identifier, got ${stamp}`)
+}
+const familyVersion = `${baseVersion}.soc.${stamp}`
+const SKIPPED_DIRECTORIES = new Set(['node_modules', 'vendor', '.git', '.desktop-build', 'lib', 'dist'])
+function* manifestsUnder(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!SKIPPED_DIRECTORIES.has(entry.name)) yield* manifestsUnder(join(directory, entry.name))
+    } else if (entry.name === 'package.json') {
+      yield join(directory, entry.name)
+    }
+  }
+}
+let stamped = 0
+for (const manifestPath of manifestsUnder(root)) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  if (manifest.version !== checkoutVersion) continue
+  manifest.version = familyVersion
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  stamped += 1
+}
+if (stamped === 0) throw new Error(`patch-upstream: no manifest carried the family version ${checkoutVersion}`)
+console.log(`stamped: ${stamped} manifests ${checkoutVersion} → ${familyVersion}`)
+
+// ── 5. SOC native packages + the soc-cloud preset that mounts them ───────────
 // These are new first-party workspace packages, so there is no upstream file to
 // hash-guard: the sources are simply copied in. The workspace glob `packages/*/*`
 // already picks up `packages/soc/*`. Only the sources travel — `node_modules`,
@@ -286,12 +330,8 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar', 'tool-soc-edr', '
       return path === '' || SOC_PACKAGE_ENTRIES.has(path.split(sep)[0])
     },
   })
-  // The release packer requires one version across the whole `dsh` family, so
-  // read it off a package that is certainly a member rather than hardcoding it:
-  // the checkout's ref then dictates the version, as it should.
-  const familyVersion = JSON.parse(
-    readFileSync(join(root, 'packages', 'core', 'tools', 'package.json'), 'utf8'),
-  ).version
+  // The release packer requires one version across the whole `dsh` family:
+  // the stamped one from section 4.
   const manifestPath = join(to, 'package.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   manifest.version = familyVersion
@@ -347,7 +387,7 @@ patch(
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
 console.log(`generated: packages/preset/agent-presets/presets/${SOC_PRESET_ID}`)
 
-// ── 5. SOC Cloud credentials card in Settings → Plugins ──────────────────────
+// ── 6. SOC Cloud credentials card in Settings → Plugins ──────────────────────
 // A self-contained card that always renders and writes SOC_USERNAME /
 // SOC_PASSWORD through the credentials domain, so the two secrets never pass
 // through the model or the settings file. The two card sources are new files

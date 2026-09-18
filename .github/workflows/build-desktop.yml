@@ -74,17 +74,22 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Patch upstream (unsigned build, onboarding, Brave Search preset, SOC tools)
+        env:
+          DSH_SOC_BUILD_STAMP: ${{ github.run_number }}
+        run: node scripts/patch-upstream.mjs upstream
+
+      # After the patch: it stamps the build's version onto the dsh family.
       - name: Read version
         id: version
         shell: bash
         run: echo "version=$(node -p "require('./upstream/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Patch upstream (unsigned build, onboarding, Brave Search preset)
-        run: node scripts/patch-upstream.mjs upstream
-
+      # Not frozen: the patch declares the SOC workspace packages on apps/cli,
+      # which the upstream lockfile cannot know about (workspace links only).
       - name: Install
         working-directory: upstream
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Package
         working-directory: upstream

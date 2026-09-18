@@ -113,6 +113,10 @@ kèm sẵn Node.js, pnpm và toàn bộ dsh (cài offline ở lần mở đầu)
 Cần Node.js ≥ 22.19 và `corepack` (đi kèm Node). Kết quả nằm trong
 `.work/upstream/apps/desktop/.desktop-build/targets/mac-<arch>/artifacts/`.
 
+Mỗi lần build, version được đóng dấu khác nhau nên ứng dụng tự nhận ra bản mới và cài lại
+profile ở lần mở đầu (không cần xoá `~/.dsh/profiles/desktop` tay). Tài khoản và cấu hình
+nằm ngoài profile nên được giữ nguyên.
+
 ## Bản vá làm gì
 
 [`scripts/patch-upstream.mjs`](scripts/patch-upstream.mjs) sửa checkout upstream trước khi đóng gói:
@@ -125,6 +129,7 @@ Cần Node.js ≥ 22.19 và `corepack` (đi kèm Node). Kết quả nằm trong
 | Chuỗi giao diện của wizard (English + 中文) | `packages/client/ui-settings-models/src/client/locales.ts` |
 | Preset `standard-brave` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-brave/` |
 | Preset mặc định của bản desktop = `standard-brave` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
+| Đóng dấu version theo từng build lên cả họ `dsh` (`0.1.5-rc.1` → `0.1.5-rc.1.soc.<dấu>`) để mỗi bản cài tự cài lại profile `~/.dsh/profiles/desktop`; `DSH_SOC_BUILD_STAMP` đặt dấu cố định (CI dùng số run), mặc định là thời điểm build | mọi `package.json` mang version của họ `dsh` (không đụng `vendor/`) |
 
 File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.json`](overrides/manifest.json),
 và mỗi đoạn vá phải khớp đúng một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ ràng
