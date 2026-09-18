@@ -256,6 +256,20 @@ export interface SiemSessionOptions {
  * @throws when the chain lands back on the login form: the SSO session is gone,
  *   so a fresh {@link runWso2Login} (a new OTP) is required.
  */
+/**
+ * Find the app's authorization code inside an HTML body, for a gatekeeper that
+ * redirects from script or a meta refresh rather than with a Location header.
+ * Only a URL on the app's own redirect_uri (origin + path) counts.
+ * @returns the code, or undefined when the body carries no such URL.
+ */
+function extractCodeFromHtml(body: string, origin: string, path: string): string | undefined {
+  const escaped = (origin + (path === '/' ? '/?' : path)).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  // e.g. https://siem.example/?code=XYZ or https://siem.example/?state=..&code=XYZ
+  const re = new RegExp(escaped.replace('\\/\\?', '\\/?\\?') + '[^"\'\\s<>]*[?&]code=([A-Za-z0-9._~-]+)')
+  const m = re.exec(body)
+  return m?.[1]
+}
+
 export async function establishSiemSession(
   opts: SiemSessionOptions,
 ): Promise<{ code: string, cookies: Record<string, string> }> {
@@ -309,8 +323,22 @@ export async function establishSiemSession(
   for (let hop = 0; hop < 8; hop++) {
     const res = await request(next)
     if (!REDIRECT_STATUSES.has(res.status)) {
+      // A hop answered with a page instead of a Location header. The gatekeeper
+      // may redirect from HTML (meta refresh / location.href) rather than with a
+      // 302 — look for the redirect_uri carrying a code inside the body first.
+      const body = await res.text().catch(() => '')
+      const inline = extractCodeFromHtml(body, redirectOrigin, redirectPath)
+      if (inline !== undefined) return { code: inline, cookies: jar.snapshot() }
+      // Otherwise say exactly where the chain stopped and what came back, so a
+      // failed run reports rather than guesses. Never echo tokens or codes.
+      const kind = /login\.do|authenticationendpoint|name="password"/i.test(body) ? 'login form'
+        : /document\.cookie\s*=\s*"D1N=/.test(body) ? 'WAF bootstrap'
+        : /^\s*\{/.test(body) ? 'json'
+        : 'html'
+      const snippet = body.replace(/\s+/g, ' ').replace(/[?&](code|state|session_state)=[^&"'\s]+/g, '$1=<redacted>').slice(0, 160)
       throw new SocAuthError(
-        `SIEM auth: the SIEM authorize did not redirect to its redirect_uri (HTTP ${res.status}).`,
+        `SIEM auth: hop ${hop} (${redactUrl(next)}) answered HTTP ${res.status} (${res.headers.get('content-type') ?? 'no content-type'}; ${kind}) `
+        + `instead of redirecting; cookies held: [${Object.keys(jar.snapshot()).sort().join(', ')}]; body: "${snippet}"`,
       )
     }
     const location = res.headers.get('location')

@@ -282,3 +282,24 @@ describe('establishSiemSession', () => {
     })).rejects.toThrow(/SSO session has expired|soc_login/i)
   })
 })
+
+describe('establishSiemSession: HTML redirects and diagnostics', () => {
+  const SIEM = 'https://siem.example'
+  const opts = { siemBaseUrl: SIEM, clientId: 'cym_portal', audience: 'cym_dashboard_api', scope: 'read:db_dashboard', cookies: { commonAuthId: 'abc' } }
+
+  it('extracts the app code when the gatekeeper redirects from HTML instead of a 302', async () => {
+    const html = new Response(
+      `<html><head><meta http-equiv="refresh" content="0;url=${SIEM}/?state=s1&code=APPCODE"></head></html>`,
+      { status: 200, headers: { 'content-type': 'text/html' } },
+    )
+    const f = sequenceFetch([redirect(`${IAM}/oauth2/authorize?client_id=siem-iam`), html])
+    const { code } = await establishSiemSession({ ...opts, fetchImpl: f as any })
+    expect(code).toBe('APPCODE')
+  })
+
+  it('names the stopping hop and body kind when a page is not a redirect', async () => {
+    const login = new Response('<form name="password"></form>', { status: 200, headers: { 'content-type': 'text/html' } })
+    const f = sequenceFetch([redirect(`${IAM}/oauth2/authorize?client_id=siem-iam`), login])
+    await expect(establishSiemSession({ ...opts, fetchImpl: f as any })).rejects.toThrow(/hop 1 .*HTTP 200.*login form.*cookies held/)
+  })
+})
