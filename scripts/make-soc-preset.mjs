@@ -11,34 +11,28 @@
 //   - `tool-soc-nsm` registers the read-only NSM/NDR tools (same session)
 // The append point is the end of the upstream composition, so this generator
 // fails loud only when the generated `standard-brave` preset itself is gone.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export const PRESET_ID = 'soc-cloud'
 
-// Placeholder endpoints. The real ones name internal systems, so they live in
-// `soc-endpoints.json` at the repo root, which is not committed; a build without
-// that file still produces a working preset shape, just pointed nowhere.
-export const PLACEHOLDER_ENDPOINTS = {
-  iamUrl: 'https://iam.example',
-  clientId: 'CLIENT_ID',
-  redirectUri: 'https://soc.example',
-  soarBaseUrl: 'https://soar.example',
-  tenant: 'MASTER',
-  /** What the preset calls itself in the app. The deployment may rename it. */
-  label: 'SOC Cloud',
-}
+// The preset carries no endpoints. They name internal systems, so a build that
+// embedded them would disclose the deployment to anyone holding the installer
+// and would serve only that one deployment. `soc-auth` resolves them per machine
+// instead: `soc-endpoints.json` in the dsh home, or SOC_* in the environment.
+/** What the preset calls itself in the app; `DSH_SOC_PRESET_LABEL` renames it. */
+export const DEFAULT_PRESET_LABEL = 'SOC Cloud'
 
 /**
- * Read the deployment's endpoints, falling back to placeholders.
- * @param {string} repoRoot - this repository's root.
- * @returns {typeof PLACEHOLDER_ENDPOINTS} the endpoints to write into the preset.
+ * The preset's display name. It travels in the build, so it names no system by
+ * default: a deployment that wants its own name sets the variable at build time.
+ * @param {NodeJS.ProcessEnv} [env] - the build environment.
+ * @returns {string} the label to write.
  */
-export function readEndpoints(repoRoot) {
-  const path = join(repoRoot, 'soc-endpoints.json')
-  if (!existsSync(path)) return PLACEHOLDER_ENDPOINTS
-  return { ...PLACEHOLDER_ENDPOINTS, ...JSON.parse(readFileSync(path, 'utf8')) }
+export function presetLabel(env = process.env) {
+  const configured = env.DSH_SOC_PRESET_LABEL?.trim()
+  return configured !== undefined && configured !== '' ? configured : DEFAULT_PRESET_LABEL
 }
 
 /**
@@ -46,10 +40,9 @@ export function readEndpoints(repoRoot) {
  *
  * Credentials are refs resolved through `ctx.credentials`; the OTP is supplied
  * at run time as an argument to `soc_login`, never stored here.
- * @param {typeof PLACEHOLDER_ENDPOINTS} endpoints - the deployment's endpoints.
  * @returns {string[]} the YAML lines to append.
  */
-export const socRows = endpoints => [
+export const socRows = () => [
   '- id: soc-cloud',
   '  name: cordis:group',
   '  group: true',
@@ -63,11 +56,11 @@ export const socRows = endpoints => [
   '    - id: soc-auth',
   "      name: '@deepseek-ai/dsh-soc-auth'",
   '      config:',
-  `        iamUrl: ${endpoints.iamUrl}`,
-  `        clientId: ${endpoints.clientId}`,
-  `        redirectUri: ${endpoints.redirectUri}`,
-  `        soarBaseUrl: ${endpoints.soarBaseUrl}`,
-  `        tenant: ${endpoints.tenant}`,
+  '        # No endpoints here: they would ship inside every installer, naming',
+  '        # internal systems to whoever holds the file, and would pin one build',
+  '        # to one deployment. soc-auth reads them per machine, from',
+  '        # `soc-endpoints.json` in the dsh home or from SOC_* in the',
+  '        # environment; `soc_login` says what is missing when nothing is set.',
   '        usernameRef: SOC_USERNAME',
   '        passwordRef: SOC_PASSWORD',
   '',
@@ -95,22 +88,21 @@ function requireOnce(text, needle, label, source) {
  * Write `agent.cordis.yml` and `preset.yml` for the SOC Cloud preset.
  * @param {string} upstream - deepseek-ai/deepseek-harness checkout.
  * @param {string} output - preset directory to create or overwrite.
- * @param {string} [repoRoot] - this repository's root, holding `soc-endpoints.json`.
  */
-export function writeSocPreset(upstream, output, repoRoot = resolve(import.meta.dirname, '..')) {
+export function writeSocPreset(upstream, output) {
   const source = join(upstream, 'packages/preset/agent-presets/presets/standard-brave/agent.cordis.yml')
   let text = readFileSync(source, 'utf8')
   // Guard the row the SOC rows are appended after: a composition that no longer
   // ends in the model-facing tool list needs review before we extend it.
   requireOnce(text, "  name: '@deepseek-ai/dsh-tool-present'", 'tool-present', source)
-  const endpoints = readEndpoints(repoRoot)
-  text = `${text.trimEnd()}\n\n# ── ${endpoints.label} ──────────────────────────────────────────────────────\n\n${socRows(endpoints).join('\n')}`
+  const label = presetLabel()
+  text = `${text.trimEnd()}\n\n# ── ${label} ────────────────────────────────────────────────────────────────\n\n${socRows().join('\n')}`
   text = `# Generated by deepseek-harness-desktop/scripts/make-soc-preset.mjs from the\n# upstream \`standard\` preset: WSO2 login service plus the read-only SOAR, EDR,\n# SIEM and NSM tools.\n\n${text}`
 
   mkdirSync(output, { recursive: true })
   writeFileSync(join(output, 'agent.cordis.yml'), text)
   writeFileSync(join(output, 'preset.yml'), [
-    `name: ${endpoints.label}`,
+    `name: ${label}`,
     'description: Standard coding agent plus read-only SOAR, EDR, SIEM and NSM (NDR) tools and soc_login; the OTP is asked for at run time.',
     'order: 3',
     '',

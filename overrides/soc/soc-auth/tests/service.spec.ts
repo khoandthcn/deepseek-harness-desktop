@@ -434,9 +434,42 @@ describe('SocAuthService.edrAuthHeaders', () => {
     expect(svc.edrAuthHeaders().Cookie).toBeUndefined()
   })
 
-  it('defaults edrBaseUrl to the the platform EDR host', () => {
+  it('has no built-in EDR endpoint, and says so rather than guessing one', async () => {
     const svc = makeService(stubFetchEdr([]))
-    expect(svc.edrBaseUrl).toBe('https://edr.example.com')
+    expect(svc.edrBaseUrl).toBe('')
+    await svc.login(OTP)
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/no EDR endpoint is configured/)
+    expect(err.message).toContain('edrBaseUrl')
+  })
+})
+
+describe('SocAuthService without endpoints', () => {
+  it('tells the user which keys to write, and where, instead of failing mid-flow', async () => {
+    const svc = new SocAuthService({
+      endpoints: { values: {}, missing: ['iamUrl', 'clientId', 'redirectUri', 'soarBaseUrl'], filePath: '/home/u/.dsh/soc-endpoints.json' },
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: vi.fn(async () => { throw new Error('the network must not be touched') }) as any,
+    })
+    const err = await expectNoSecrets(svc.login(OTP))
+    expect(err.message).toMatch(/endpoints are not configured/)
+    expect(err.message).toContain('/home/u/.dsh/soc-endpoints.json')
+    expect(err.message).toContain('soarBaseUrl')
+    expect(svc.isAuthenticated()).toBe(false)
+  })
+
+  it('lets a preset row supply what the machine did not', async () => {
+    const svc = new SocAuthService({
+      endpoints: { values: {}, missing: ['iamUrl', 'clientId', 'redirectUri', 'soarBaseUrl'], filePath: '/x' },
+      iamUrl: IAM,
+      clientId: 'cid',
+      redirectUri: REDIRECT_URI,
+      soarBaseUrl: SOAR,
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: stubFetch([]) as any,
+    })
+    await svc.login(OTP)
+    expect(svc.isAuthenticated()).toBe(true)
   })
 })
 
@@ -603,9 +636,12 @@ describe('SocAuthService.nsmAuthHeaders', () => {
     expect(svc.nsmAuthHeaders()).toEqual({})
   })
 
-  it('defaults nsmBaseUrl to the the platform NSM host', () => {
+  it('has no built-in NSM endpoint, and says so rather than guessing one', async () => {
     const svc = makeService(stubFetchNsm())
-    expect(svc.nsmBaseUrl).toBe('https://nsm.example.com')
+    expect(svc.nsmBaseUrl).toBe('')
+    await svc.login(OTP)
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/no NSM endpoint is configured/)
   })
 })
 
@@ -841,8 +877,11 @@ describe('SocAuthService.siemAuthHeaders', () => {
     expect(svc.siemAuthHeaders().Authorization).toBeUndefined()
   })
 
-  it('defaults siemBaseUrl to the the platform SIEM host', () => {
+  it('has no built-in SIEM endpoint, and says so rather than guessing one', async () => {
     const svc = makeService(stubFetchSiem([]))
-    expect(svc.siemBaseUrl).toBe('https://siem.example.com')
+    expect(svc.siemBaseUrl).toBe('')
+    await svc.login(OTP)
+    const err = await expectNoSecrets(svc.siemToken())
+    expect(err.message).toMatch(/no SIEM endpoint is configured/)
   })
 })

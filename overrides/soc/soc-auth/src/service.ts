@@ -17,6 +17,7 @@
  */
 
 import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
+import { missingEndpointsMessage, type ResolvedEndpoints } from './endpoints.ts'
 import { establishAppSession, establishSiemSession, runWso2Login, setCookiesOf, SiemRefusalError, SocAuthError, type FetchLike } from './wso2.ts'
 
 /** Refresh a little before the real expiry, so an in-flight call cannot race it. */
@@ -54,12 +55,18 @@ export const SIEM_GATEKEEPER_SCOPE = 'login'
 const SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'token', 'accessToken'])
 
 export interface SocAuthServiceOptions {
+  /**
+   * The endpoints this machine supplies, from its file or environment. Every
+   * field below overrides the matching entry, so a preset row still wins and a
+   * test can pass what it needs directly.
+   */
+  endpoints?: ResolvedEndpoints | undefined
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
-  iamUrl: string
-  clientId: string
-  redirectUri: string
+  iamUrl?: string | undefined
+  clientId?: string | undefined
+  redirectUri?: string | undefined
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
-  soarBaseUrl: string
+  soarBaseUrl?: string | undefined
   /** SOAR tenant; `MASTER` unless the deployment says otherwise. */
   tenant?: string | undefined
   /** SOAR OAuth client id used by its authorize. Defaults to `SOAR_CLIENT`. */
@@ -68,19 +75,19 @@ export interface SocAuthServiceOptions {
   soarRedirectUri?: string | undefined
   /** SOAR `authen` base that exchanges the code for a session. Defaults to `${soarBaseUrl}/authen`. */
   soarAuthenUrl?: string | undefined
-  /** Base URL of the EDR API, e.g. `https://edr.example`. Defaults to `https://edr.example.com`. */
+  /** Base URL of the EDR API, e.g. `https://edr.example`. */
   edrBaseUrl?: string | undefined
   /** EDR OAuth client id used by its authorize. Defaults to `EDR`. */
   edrClientId?: string | undefined
   /** EDR OIDC callback URL. Defaults to `${edrBaseUrl}/v2/callback`. */
   edrRedirectUri?: string | undefined
-  /** Base URL of the SIEM API. Defaults to `https://siem.example.com`. */
+  /** Base URL of the SIEM API, e.g. `https://siem.example`. */
   siemBaseUrl?: string | undefined
   /** SIEM OAuth client id used by its own authorize/token. Defaults to `cym_portal`. */
   siemClientId?: string | undefined
   /** SIEM management client id sent by probe tools. Defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
-  /** Base URL of the NSM (NDR) API. Defaults to `https://nsm.example.com`. */
+  /** Base URL of the NSM (NDR) API, e.g. `https://nsm.example`. */
   nsmBaseUrl?: string | undefined
   /** NSM's registered OIDC client id. Defaults to `NSM`. */
   nsmClientId?: string | undefined
@@ -186,23 +193,38 @@ export class SocAuthService {
   /** De-duplicates concurrent acquisitions of one per-API token. */
   private readonly siemInflight = new Map<string, Promise<string>>()
 
+  /** What this machine supplied, named in the error an unconfigured one gets. */
+  private readonly endpoints: ResolvedEndpoints
+
   constructor(opts: SocAuthServiceOptions) {
-    this.iamUrl = opts.iamUrl.replace(/\/+$/, '')
-    this.clientId = opts.clientId
-    this.redirectUri = opts.redirectUri
-    this.soarBaseUrl = opts.soarBaseUrl.replace(/\/+$/, '')
-    this.tenant = opts.tenant ?? 'MASTER'
-    this.soarClientId = opts.soarClientId ?? 'SOAR_CLIENT'
+    // The machine's own endpoints first; anything passed here overrides them,
+    // which is how a preset row pins one and how a test supplies just enough.
+    const supplied = opts.endpoints ?? { values: {}, missing: [], filePath: '' }
+    const trimmed = (key: string, explicit: string | undefined): string =>
+      (explicit ?? supplied.values[key] ?? '').replace(/\/+$/, '')
+    this.iamUrl = trimmed('iamUrl', opts.iamUrl)
+    this.clientId = opts.clientId ?? supplied.values.clientId ?? ''
+    this.redirectUri = opts.redirectUri ?? supplied.values.redirectUri ?? ''
+    this.soarBaseUrl = trimmed('soarBaseUrl', opts.soarBaseUrl)
+    this.endpoints = {
+      ...supplied,
+      missing: supplied.missing.filter(key => {
+        const overridden = { iamUrl: this.iamUrl, clientId: this.clientId, redirectUri: this.redirectUri, soarBaseUrl: this.soarBaseUrl }
+        return (overridden as Record<string, string>)[key] === ''
+      }),
+    }
+    this.tenant = opts.tenant ?? supplied.values.tenant ?? 'MASTER'
+    this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? 'SOAR_CLIENT'
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
     this.soarAuthenUrl = (opts.soarAuthenUrl ?? `${this.soarBaseUrl}/authen`).replace(/\/+$/, '')
-    this.edrBaseUrl = (opts.edrBaseUrl ?? 'https://edr.example.com').replace(/\/+$/, '')
-    this.edrClientId = opts.edrClientId ?? 'EDR'
+    this.edrBaseUrl = trimmed('edrBaseUrl', opts.edrBaseUrl)
+    this.edrClientId = opts.edrClientId ?? supplied.values.edrClientId ?? 'EDR'
     this.edrRedirectUri = opts.edrRedirectUri ?? `${this.edrBaseUrl}/v2/callback`
-    this.siemBaseUrl = (opts.siemBaseUrl ?? 'https://siem.example.com').replace(/\/+$/, '')
-    this.siemClientId = opts.siemClientId ?? 'cym_portal'
+    this.siemBaseUrl = trimmed('siemBaseUrl', opts.siemBaseUrl)
+    this.siemClientId = opts.siemClientId ?? supplied.values.siemClientId ?? 'cym_portal'
     this.siemMgmtClientId = opts.siemMgmtClientId ?? 'cym_api'
-    this.nsmBaseUrl = (opts.nsmBaseUrl ?? 'https://nsm.example.com').replace(/\/+$/, '')
-    this.nsmClientId = opts.nsmClientId ?? 'NSM'
+    this.nsmBaseUrl = trimmed('nsmBaseUrl', opts.nsmBaseUrl)
+    this.nsmClientId = opts.nsmClientId ?? supplied.values.nsmClientId ?? 'NSM'
     this.nsmRedirectUri = opts.nsmRedirectUri ?? `${this.nsmBaseUrl}/callback`
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
@@ -219,6 +241,9 @@ export class SocAuthService {
    * user just read from their authenticator. Throws on any failure.
    */
   async login(otp: string): Promise<void> {
+    if (this.endpoints.missing.length > 0) {
+      throw new SocAuthError(`SOC auth: ${missingEndpointsMessage(this.endpoints)}`)
+    }
     this.invalidate()
     let cookies: Record<string, string> = {}
     const { username, password } = await this.credentials()
@@ -431,6 +456,21 @@ export class SocAuthService {
   }
 
   /**
+   * Refuse a system whose endpoint this machine never supplied, naming the key
+   * and the file to put it in rather than failing on a malformed URL later.
+   * @param system - the system being reached, for the message.
+   * @param key - the endpoint key it needs.
+   * @param value - the resolved base URL, empty when it is unset.
+   */
+  private requireEndpoint(system: string, key: string, value: string): void {
+    if (value !== '') return
+    const where = this.endpoints.filePath === '' ? 'the soc-auth configuration' : this.endpoints.filePath
+    throw new SocAuthError(
+      `SOC auth: no ${system} endpoint is configured — add "${key}" to ${where}.`,
+    )
+  }
+
+  /**
    * The EDR access token, exchanged lazily and cached until `expired_in_seconds`
    * (minus a 60s skew). One token is global for every EDR endpoint (there is no
    * per-scope access step), and concurrent calls are de-duplicated.
@@ -470,6 +510,7 @@ export class SocAuthService {
   }
 
   private async exchangeEdrToken(): Promise<string> {
+    this.requireEndpoint('EDR', 'edrBaseUrl', this.edrBaseUrl)
     const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     // EDR reuses the WSO2 SSO login; the session token is the SOC token it
@@ -592,6 +633,7 @@ export class SocAuthService {
    * are granted on.
    */
   private async ensureSiemLogin(doFetch: FetchLike): Promise<Record<string, string>> {
+    this.requireEndpoint('SIEM', 'siemBaseUrl', this.siemBaseUrl)
     if (this.siemJar) return this.siemJar
     if (!this.siemLoginInflight) {
       const generation = this.generation
@@ -776,6 +818,7 @@ export class SocAuthService {
   }
 
   private async establishNsmSession(): Promise<void> {
+    this.requireEndpoint('NSM', 'nsmBaseUrl', this.nsmBaseUrl)
     const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     const { sessionToken, cookies } = await this.acquireSessionToken(doFetch, {

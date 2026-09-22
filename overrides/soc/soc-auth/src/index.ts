@@ -15,10 +15,10 @@ import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/dsh-settings'
-import { requireConfig } from './config.ts'
+import { resolveEndpoints } from './endpoints.ts'
 import { SocAuthService } from './service.ts'
 
-export * from './config.ts'
+export * from './endpoints.ts'
 export * from './wso2.ts'
 export * from './service.ts'
 
@@ -41,30 +41,35 @@ const SocCredentialsSection = z.object({})
  */
 export const inject: string[] = []
 
+/**
+ * A preset row's `config:` block. Every endpoint is optional here: a machine
+ * normally supplies them through `soc-endpoints.json` or the environment (see
+ * `endpoints.ts`), and a row only pins what a particular deployment must fix.
+ */
 export interface Config {
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
-  iamUrl: string
-  clientId: string
-  redirectUri: string
+  iamUrl?: string | undefined
+  clientId?: string | undefined
+  redirectUri?: string | undefined
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
-  soarBaseUrl: string
+  soarBaseUrl?: string | undefined
   /** SOAR tenant; defaults to `MASTER`. */
   tenant?: string | undefined
   /** SOAR OAuth client id used by the access exchange; defaults to `SOAR_CLIENT`. */
   soarClientId?: string | undefined
-  /** Base URL of the EDR API; defaults to `https://edr.example.com`. */
+  /** Base URL of the EDR API, e.g. `https://edr.example`. */
   edrBaseUrl?: string | undefined
   /** EDR OAuth client id used by its authorize; defaults to `EDR`. */
   edrClientId?: string | undefined
   /** EDR OIDC callback URL; defaults to `${edrBaseUrl}/v2/callback`. */
   edrRedirectUri?: string | undefined
-  /** Base URL of the SIEM API; defaults to `https://siem.example.com`. */
+  /** Base URL of the SIEM API, e.g. `https://siem.example`. */
   siemBaseUrl?: string | undefined
   /** SIEM OAuth client id used by its own authorize/token; defaults to `cym_portal`. */
   siemClientId?: string | undefined
   /** SIEM management client id sent by probe tools; defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
-  /** Base URL of the NSM (NDR) API; defaults to `https://nsm.example.com`. */
+  /** Base URL of the NSM (NDR) API, e.g. `https://nsm.example`. */
   nsmBaseUrl?: string | undefined
   /** NSM OIDC client id; defaults to `NSM`. */
   nsmClientId?: string | undefined
@@ -111,27 +116,20 @@ export async function resolveCredential(ctx: Context, ref: string): Promise<stri
 }
 
 export function apply(ctx: Context, config: Config | undefined): void {
-  // A row with no `config:` block arrives as undefined; say so plainly.
-  const checked = requireConfig(config)
-  const usernameRef = checked.usernameRef ?? 'SOC_USERNAME'
-  const passwordRef = checked.passwordRef ?? 'SOC_PASSWORD'
+  const row = config ?? {}
+  const usernameRef = row.usernameRef ?? 'SOC_USERNAME'
+  const passwordRef = row.passwordRef ?? 'SOC_PASSWORD'
+  // The endpoints are not built in: this machine supplies them, from its own
+  // file or environment, and a preset row may still pin them. Mounting must
+  // succeed without them — `soc_login` is where an unconfigured machine is told
+  // what to write, because that is when a user is present to act on it.
+  const endpoints = resolveEndpoints({ config: row as Record<string, unknown> })
 
   const service = new SocAuthService({
-    iamUrl: checked.iamUrl,
-    clientId: checked.clientId,
-    redirectUri: checked.redirectUri,
-    soarBaseUrl: checked.soarBaseUrl,
-    tenant: checked.tenant,
-    soarClientId: checked.soarClientId,
-    edrBaseUrl: checked.edrBaseUrl,
-    edrClientId: checked.edrClientId,
-    edrRedirectUri: checked.edrRedirectUri,
-    siemBaseUrl: checked.siemBaseUrl,
-    siemClientId: checked.siemClientId,
-    siemMgmtClientId: checked.siemMgmtClientId,
-    nsmBaseUrl: checked.nsmBaseUrl,
-    nsmClientId: checked.nsmClientId,
-    nsmRedirectUri: checked.nsmRedirectUri,
+    endpoints,
+    edrRedirectUri: row.edrRedirectUri,
+    siemMgmtClientId: row.siemMgmtClientId,
+    nsmRedirectUri: row.nsmRedirectUri,
     credentials: async () => ({
       username: await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),

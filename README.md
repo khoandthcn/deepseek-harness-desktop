@@ -129,11 +129,43 @@ nằm ngoài profile nên được giữ nguyên.
 | Chuỗi giao diện của wizard (English + 中文) | `packages/client/ui-settings-models/src/client/locales.ts` |
 | Preset `standard-brave` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-brave/` |
 | Preset mặc định của bản desktop = `standard-brave` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
+| Preset `soc-cloud` với các tool SOAR, EDR, SIEM và NSM chỉ đọc; không nhúng địa chỉ hệ thống | `packages/preset/agent-presets/presets/soc-cloud/` |
 | Đóng dấu version theo từng build lên cả họ `dsh` (`0.1.5-rc.1` → `0.1.5-rc.1.soc.<dấu>`) để mỗi bản cài tự cài lại profile `~/.dsh/profiles/desktop`; `DSH_SOC_BUILD_STAMP` đặt dấu cố định (CI dùng số run), mặc định là thời điểm build | mọi `package.json` mang version của họ `dsh` (không đụng `vendor/`) |
 
 File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.json`](overrides/manifest.json),
 và mỗi đoạn vá phải khớp đúng một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ ràng
 thay vì tạo ra bản build hỏng.
+
+## Cấu hình hệ thống SOC trên từng máy
+
+Bản cài không chứa địa chỉ hệ thống nào. Mỗi máy tự khai, bằng một trong hai cách.
+
+Cách một, tạo file `~/.dsh/soc-endpoints.json`:
+
+```json
+{
+  "iamUrl": "https://iam.example",
+  "clientId": "CLIENT_ID",
+  "redirectUri": "https://soc.example",
+  "soarBaseUrl": "https://soar.example",
+  "tenant": "MASTER",
+  "edrBaseUrl": "https://edr.example",
+  "siemBaseUrl": "https://siem.example",
+  "nsmBaseUrl": "https://nsm.example"
+}
+```
+
+Bốn khoá đầu là bắt buộc. Ba khoá base URL còn lại chỉ cần nếu dùng tool của hệ đó.
+
+Cách hai, đặt biến môi trường `SOC_IAM_URL`, `SOC_CLIENT_ID`, `SOC_REDIRECT_URI`,
+`SOC_SOAR_BASE_URL`, `SOC_TENANT`, `SOC_EDR_BASE_URL`, `SOC_SIEM_BASE_URL`,
+`SOC_NSM_BASE_URL`. Biến môi trường thắng file, và `config:` trong preset thắng cả hai.
+
+Thiếu khoá nào thì `soc_login` báo tên khoá và đường dẫn file cần sửa. Tài khoản và
+mật khẩu vẫn nhập trong Settings, OTP vẫn hỏi lúc chạy.
+
+Tên hiển thị của preset mặc định là `SOC Cloud`. Đặt `DSH_SOC_PRESET_LABEL` lúc build
+để đổi.
 
 ## Giới hạn
 
