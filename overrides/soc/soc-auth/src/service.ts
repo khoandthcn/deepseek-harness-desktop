@@ -69,7 +69,11 @@ export interface SocAuthServiceOptions {
   soarBaseUrl?: string | undefined
   /** SOAR tenant; `MASTER` unless the deployment says otherwise. */
   tenant?: string | undefined
-  /** SOAR OAuth client id used by its authorize. Defaults to `SOAR_CLIENT`. */
+  /**
+   * SOAR OAuth client id used by its own authorize. SOAR is usually registered
+   * as its own client; when a deployment does not say, the portal's client id
+   * is reused.
+   */
   soarClientId?: string | undefined
   /** SOAR OIDC callback URL. Defaults to `${soarBaseUrl}/callback`. */
   soarRedirectUri?: string | undefined
@@ -214,7 +218,7 @@ export class SocAuthService {
       }),
     }
     this.tenant = opts.tenant ?? supplied.values.tenant ?? 'MASTER'
-    this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? 'SOAR_CLIENT'
+    this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? this.clientId
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
     this.soarAuthenUrl = (opts.soarAuthenUrl ?? `${this.soarBaseUrl}/authen`).replace(/\/+$/, '')
     this.edrBaseUrl = trimmed('edrBaseUrl', opts.edrBaseUrl)

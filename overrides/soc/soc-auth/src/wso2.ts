@@ -135,7 +135,7 @@ function readSetCookies(res: Response): string[] {
 export interface AppSessionOptions {
   /** WSO2 IAM base URL. */
   iamUrl: string
-  /** This system's registered OIDC client id (SOAR uses `SOAR_CLIENT`). */
+  /** This system's registered OIDC client id: each system has its own. */
   clientId: string
   /** This system's callback URL (SOAR: `https://soar.../callback`). */
   redirectUri: string
@@ -236,7 +236,7 @@ export async function establishAppSession(
 }
 
 export interface SiemSessionOptions {
-  /** Base URL of the SIEM host, e.g. `https://siem.example.com`. */
+  /** Base URL of the SIEM host, e.g. `https://siem.example`. */
   siemBaseUrl: string
   /** SIEM's own OAuth client id (`cym_portal`). */
   clientId: string

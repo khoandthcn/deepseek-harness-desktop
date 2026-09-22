@@ -55,7 +55,7 @@ export interface Config {
   soarBaseUrl?: string | undefined
   /** SOAR tenant; defaults to `MASTER`. */
   tenant?: string | undefined
-  /** SOAR OAuth client id used by the access exchange; defaults to `SOAR_CLIENT`. */
+  /** SOAR OAuth client id used by its authorize; defaults to `clientId`. */
   soarClientId?: string | undefined
   /** Base URL of the EDR API, e.g. `https://edr.example`. */
   edrBaseUrl?: string | undefined

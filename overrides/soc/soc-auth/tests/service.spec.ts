@@ -162,7 +162,8 @@ describe('SocAuthService.soarBearer', () => {
     expect(String(init.headers['content-type'])).toMatch(/application\/json/)
     expect(JSON.parse(init.body)).toEqual({
       tenant: 'MASTER',
-      client_id: 'SOAR_CLIENT',
+      // no soarClientId configured: SOAR's authorize reuses the portal's client
+      client_id: 'cid',
       scopes: SCOPE,
     })
     expect(String(init.headers['cookie'])).toContain('D1N=waf-cookie')
