@@ -40,6 +40,13 @@ const SIEM_LOGIN_AUDIENCE = 'cym_api'
 const SIEM_LOGIN_SCOPE = 'login'
 const SIEM_PORTAL_AUDIENCE = 'cym_portal'
 
+/**
+ * NSM hands out no expiry: its session is a cookie jar whose CSRF token the
+ * server retires on its own ("The CSRF token has expired"). Re-establish it
+ * regularly rather than discovering the expiry through a failed search.
+ */
+const NSM_SESSION_TTL_MS = 900_000
+
 /** The audience and scope of the gatekeeper's own management API (`/oauth/management/*`). */
 export const SIEM_GATEKEEPER_AUDIENCE = 'gatekeeper'
 export const SIEM_GATEKEEPER_SCOPE = 'login'
@@ -74,6 +81,12 @@ export interface SocAuthServiceOptions {
   siemClientId?: string | undefined
   /** SIEM management client id sent by probe tools. Defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
+  /** Base URL of the NSM (NDR) API. Defaults to `https://nsm.example.com`. */
+  nsmBaseUrl?: string | undefined
+  /** NSM's registered OIDC client id. Defaults to `NSM`. */
+  nsmClientId?: string | undefined
+  /** NSM OIDC callback URL; defaults to `${nsmBaseUrl}/callback`. */
+  nsmRedirectUri?: string | undefined
   /**
    * Supplies the login credentials when a login actually runs. A callback,
    * not two strings: the credentials seam is asynchronous, and the secret
@@ -119,6 +132,13 @@ export class SocAuthService {
    * `client_id` of its permission check, so it is configured once, here.
    */
   readonly siemMgmtClientId: string
+  /**
+   * Base URL of the NSM API, without a trailing slash. Public because the NSM
+   * tool plugin reads it from here, so endpoint and tools cannot drift apart.
+   */
+  readonly nsmBaseUrl: string
+  private readonly nsmClientId: string
+  private readonly nsmRedirectUri: string
   private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
@@ -155,6 +175,13 @@ export class SocAuthService {
   private siemJar: Record<string, string> | null = null
   /** De-duplicates concurrent SIEM logins. */
   private siemLoginInflight: Promise<Record<string, string>> | null = null
+  /**
+   * The NSM session: the cookies its `sso/login` set, the CSRF header those
+   * cookies dictate, and when to establish it again. Null until signed in.
+   */
+  private nsmCred: { cookies: Record<string, string>, csrfHeader: string, csrfValue: string, exp: number } | null = null
+  /** De-duplicates concurrent NSM sign-ins. */
+  private nsmInflight: Promise<void> | null = null
   /** SIEM per-API credentials, keyed `audience/scope`, each cached until it expires. */
   private readonly siemCreds = new Map<string, { token: string, type: string, exp: number }>()
   /** De-duplicates concurrent acquisitions of one per-API token. */
@@ -175,6 +202,9 @@ export class SocAuthService {
     this.siemBaseUrl = (opts.siemBaseUrl ?? 'https://siem.example.com').replace(/\/+$/, '')
     this.siemClientId = opts.siemClientId ?? 'cym_portal'
     this.siemMgmtClientId = opts.siemMgmtClientId ?? 'cym_api'
+    this.nsmBaseUrl = (opts.nsmBaseUrl ?? 'https://nsm.example.com').replace(/\/+$/, '')
+    this.nsmClientId = opts.nsmClientId ?? 'NSM'
+    this.nsmRedirectUri = opts.nsmRedirectUri ?? `${this.nsmBaseUrl}/callback`
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
     this.now = opts.now ?? (() => Date.now())
@@ -225,6 +255,8 @@ export class SocAuthService {
     this.siemLoginInflight = null
     this.siemCreds.clear()
     this.siemInflight.clear()
+    this.nsmCred = null
+    this.nsmInflight = null
   }
 
   /**
@@ -673,6 +705,99 @@ export class SocAuthService {
       )
     }
     return { payload, jar }
+  }
+
+  /**
+   * Ensure a live NSM session, establishing one on first use and again once the
+   * previous one has aged out. Concurrent calls are de-duplicated. NSM signs in
+   * with the SOC session rather than a token of its own: its SPA exchanges the
+   * IAM code at the portal callback and posts the resulting session token to
+   * NSM's `sso/login`, which answers with the session cookies.
+   */
+  async nsmSession(): Promise<void> {
+    if (!this.isAuthenticated()) {
+      throw new SocAuthError(
+        'SOC auth: not logged in — ask the user for their current OTP and call soc_login first.',
+      )
+    }
+    const cached = this.nsmCred
+    if (cached && this.now() < cached.exp) return
+    if (!this.nsmInflight) {
+      this.nsmInflight = this.establishNsmSession().finally(() => {
+        this.nsmInflight = null
+      })
+    }
+    return this.nsmInflight
+  }
+
+  /**
+   * Headers for an NSM request: the session cookies, plus the CSRF token echoed
+   * into the header NSM names after the front end it served (`X-CSRFToken-MANAGER`).
+   * Empty until `nsmSession()` has run.
+   */
+  nsmAuthHeaders(): Record<string, string> {
+    const cred = this.nsmCred
+    if (!cred) return {}
+    const cookie = Object.entries(cred.cookies).map(([k, v]) => `${k}=${v}`).join('; ')
+    const headers: Record<string, string> = { [cred.csrfHeader]: cred.csrfValue }
+    if (cookie) headers.Cookie = cookie
+    return headers
+  }
+
+  private async establishNsmSession(): Promise<void> {
+    const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
+    const { sessionToken, cookies } = await this.acquireSessionToken(doFetch, {
+      system: 'NSM',
+      clientId: this.nsmClientId,
+      redirectUri: this.nsmRedirectUri,
+      callbackUrl: `${this.iamUrl}/authen/callback`,
+      scope: 'openid profile email read_user',
+    })
+    const url = `${this.nsmBaseUrl}/api/v1/sso/login/`
+    // Carry the login jar: the WAF cookie rides here too, and a cookie-less
+    // request is answered by its bootstrap page rather than by NSM.
+    let jar: Record<string, string> = { ...cookies }
+    const post = async (afterBootstrap = false): Promise<Response> => {
+      const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ')
+      let response: Response
+      try {
+        response = await doFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
+          body: JSON.stringify({ session_token: sessionToken }),
+        })
+      } catch (cause) {
+        throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) failed (network error).`, { cause })
+      }
+      if (!afterBootstrap && response.status === 200) {
+        const d1n = parseD1nBootstrap(await response.clone().text())
+        if (d1n !== undefined) {
+          jar = { ...jar, [D1N_COOKIE]: d1n }
+          return post(true)
+        }
+      }
+      return response
+    }
+    const res = await post()
+    if (res.status !== 200) {
+      throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) returned HTTP ${res.status}.`)
+    }
+    jar = { ...jar, ...setCookiesOf(res) }
+    // NSM names the header after the front end it serves, and the cookie of that
+    // same name holds the value: find it rather than hardcoding `MANAGER`.
+    const csrf = Object.keys(jar).find((name) => /^x-csrftoken-/i.test(name))
+    if (csrf === undefined) {
+      throw new SocAuthError(
+        'SOC auth: the NSM sign-in set no CSRF cookie, so its API would refuse every later request '
+        + `(cookies held: [${Object.keys(jar).sort().join(', ')}]).`,
+      )
+    }
+    this.nsmCred = {
+      cookies: jar,
+      csrfHeader: csrf,
+      csrfValue: jar[csrf] as string,
+      exp: this.now() + NSM_SESSION_TTL_MS,
+    }
   }
 
   private async exchangeSoarBearer(scope: string): Promise<string> {

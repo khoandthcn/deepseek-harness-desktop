@@ -317,8 +317,15 @@ const SOC_PACKAGE_REFERENCES = {
     '../soc-client',
     '../soc-auth',
   ],
+  'tool-soc-nsm': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../core/tools',
+    '../soc-client',
+    '../soc-auth',
+  ],
 }
-for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar', 'tool-soc-edr', 'tool-soc-siem']) {
+for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar', 'tool-soc-edr', 'tool-soc-siem', 'tool-soc-nsm']) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
   cpSync(from, to, {
@@ -351,7 +358,14 @@ for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar', 'tool-soc-edr', '
 // way every shipped tool is declared.
 const cliManifestPath = join(root, 'apps', 'cli', 'package.json')
 const cliManifest = JSON.parse(readFileSync(cliManifestPath, 'utf8'))
-for (const name of ['dsh-soc-client', 'dsh-soc-auth', 'dsh-tool-soc-soar', 'dsh-tool-soc-edr', 'dsh-tool-soc-siem']) {
+for (const name of [
+  'dsh-soc-client',
+  'dsh-soc-auth',
+  'dsh-tool-soc-soar',
+  'dsh-tool-soc-edr',
+  'dsh-tool-soc-siem',
+  'dsh-tool-soc-nsm',
+]) {
   cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
 }
 cliManifest.dependencies = Object.fromEntries(
@@ -371,7 +385,8 @@ patch(
   + '      "@deepseek-ai/dsh-soc-auth": ["./packages/soc/soc-auth/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-soar": ["./packages/soc/tool-soc-soar/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-edr": ["./packages/soc/tool-soc-edr/src"],\n'
-  + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n',
+  + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n'
+  + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n',
 )
 patch(
   'tsconfig.host.json',
@@ -381,7 +396,8 @@ patch(
   + '    { "path": "./packages/soc/soc-auth" },\n'
   + '    { "path": "./packages/soc/tool-soc-soar" },\n'
   + '    { "path": "./packages/soc/tool-soc-edr" },\n'
-  + '    { "path": "./packages/soc/tool-soc-siem" },\n',
+  + '    { "path": "./packages/soc/tool-soc-siem" },\n'
+  + '    { "path": "./packages/soc/tool-soc-nsm" },\n',
 )
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))

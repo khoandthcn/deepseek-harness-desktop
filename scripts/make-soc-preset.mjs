@@ -7,7 +7,8 @@
 //   - `soc-auth` registers the WSO2 login service (`ctx.socAuth`)
 //   - `tool-soc-soar` registers `soc_login` plus the read-only SOAR tools
 //   - `tool-soc-edr` registers the read-only EDR tools (reusing the same session)
-//   - `tool-soc-siem` registers the best-effort SIEM access probe (same session)
+//   - `tool-soc-siem` registers the read-only SIEM tools (same session)
+//   - `tool-soc-nsm` registers the read-only NSM/NDR tools (same session)
 // The append point is the end of the upstream composition, so this generator
 // fails loud only when the generated `standard-brave` preset itself is gone.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -76,6 +77,9 @@ export const socRows = endpoints => [
   '',
   '    - id: tool-soc-siem',
   "      name: '@deepseek-ai/dsh-tool-soc-siem'",
+  '',
+  '    - id: tool-soc-nsm',
+  "      name: '@deepseek-ai/dsh-tool-soc-nsm'",
   '',
 ]
 

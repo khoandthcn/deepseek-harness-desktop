@@ -64,6 +64,12 @@ export interface Config {
   siemClientId?: string | undefined
   /** SIEM management client id sent by probe tools; defaults to `cym_api`. */
   siemMgmtClientId?: string | undefined
+  /** Base URL of the NSM (NDR) API; defaults to `https://nsm.example.com`. */
+  nsmBaseUrl?: string | undefined
+  /** NSM OIDC client id; defaults to `NSM`. */
+  nsmClientId?: string | undefined
+  /** NSM OIDC callback URL; defaults to `${nsmBaseUrl}/callback`. */
+  nsmRedirectUri?: string | undefined
   /**
    * Credential *references*, never the values themselves: the name of the entry
    * to read from `ctx.credentials`, falling back to the environment variable of
@@ -123,6 +129,9 @@ export function apply(ctx: Context, config: Config | undefined): void {
     siemBaseUrl: checked.siemBaseUrl,
     siemClientId: checked.siemClientId,
     siemMgmtClientId: checked.siemMgmtClientId,
+    nsmBaseUrl: checked.nsmBaseUrl,
+    nsmClientId: checked.nsmClientId,
+    nsmRedirectUri: checked.nsmRedirectUri,
     credentials: async () => ({
       username: await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),

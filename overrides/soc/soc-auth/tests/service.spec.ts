@@ -435,6 +435,132 @@ describe('SocAuthService.edrAuthHeaders', () => {
   })
 })
 
+const NSM = 'https://nsm.example'
+
+/**
+ * A fetch stub for the NSM flow: the WSO2 login, NSM's own IAM authorize (which
+ * lands on its `/callback` with the code), the portal code exchange, and NSM's
+ * `sso/login`, which answers with the session cookies — among them the CSRF
+ * cookie whose value every later request must echo in a header of the same name.
+ */
+function stubFetchNsm(
+  login: Response = new Response(JSON.stringify({ status: true }), {
+    status: 200,
+    headers: new Headers([
+      ['content-type', 'application/json'],
+      ['set-cookie', 'sessionid=sid-1; Path=/; HttpOnly'],
+      ['set-cookie', 'X-CSRFToken-MANAGER=csrf-1; Path=/'],
+    ]),
+  }),
+  wso2: Response[] = wso2HappyPath(),
+) {
+  let iam = 0
+  const fn = vi.fn(async (url: string) => {
+    const u = String(url)
+    if (u.startsWith(`${NSM}/api/v1/sso/login/`)) return login
+    if (u.startsWith(`${IAM}/oauth2/authorize`) && u.includes('client_id=NSM')) {
+      return redirect(`${NSM}/callback?code=NSMCODE&session_state=S`)
+    }
+    if (u.startsWith(`${IAM}/authen/callback`)) return json(200, { session_token: 'NSM-SESSION' })
+    const res = wso2[iam++]
+    if (!res) throw new Error('unexpected extra WSO2 fetch call')
+    return res
+  })
+  return fn
+}
+
+function makeNsmService(fetchImpl: any, now: () => number = () => 1_000_000) {
+  return makeService(fetchImpl, now, { nsmBaseUrl: NSM })
+}
+
+describe('SocAuthService.nsmAuthHeaders', () => {
+  it('rejects with a clear error before any login', async () => {
+    const svc = makeNsmService(stubFetchNsm())
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/not logged in/i)
+  })
+
+  it('exchanges the SOC session for an NSM session and echoes the CSRF cookie as a header', async () => {
+    const f = stubFetchNsm()
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+    await svc.nsmSession()
+
+    // NSM's own IAM client, and its callback is where the code lands
+    const authorize = new URL(String(callsOf(f).find(c => String(c[0]).includes('client_id=NSM'))![0]))
+    expect(authorize.searchParams.get('client_id')).toBe('NSM')
+    expect(authorize.searchParams.get('redirect_uri')).toBe(`${NSM}/callback`)
+
+    // the portal exchange carries the code, then sso/login carries the session token
+    const [, exchange] = callsOf(f).find(c => String(c[0]).startsWith(`${IAM}/authen/callback`))! as [string, any]
+    expect(JSON.parse(String(exchange.body))).toEqual({ code: 'NSMCODE', client_id: 'NSM' })
+    const [, ssoLogin] = callsOf(f).find(c => String(c[0]).startsWith(`${NSM}/api/v1/sso/login/`))! as [string, any]
+    expect(JSON.parse(String(ssoLogin.body))).toEqual({ session_token: 'NSM-SESSION' })
+
+    const headers = svc.nsmAuthHeaders()
+    expect(headers.Cookie).toContain('sessionid=sid-1')
+    expect(headers.Cookie).toContain('X-CSRFToken-MANAGER=csrf-1')
+    expect(headers['X-CSRFToken-MANAGER']).toBe('csrf-1')
+  })
+
+  it('logs in to NSM once and reuses the session', async () => {
+    const f = stubFetchNsm()
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+    await svc.nsmSession()
+    await svc.nsmSession()
+    expect(callsOf(f).filter(c => String(c[0]).startsWith(`${NSM}/api/v1/sso/login/`))).toHaveLength(1)
+  })
+
+  it('renews the NSM session once its short lifetime passes', async () => {
+    let clock = 1_000_000
+    const f = stubFetchNsm()
+    const svc = makeNsmService(f, () => clock)
+    await svc.login(OTP)
+    await svc.nsmSession()
+    clock += 60 * 60 * 1000
+    await svc.nsmSession()
+    expect(callsOf(f).filter(c => String(c[0]).startsWith(`${NSM}/api/v1/sso/login/`))).toHaveLength(2)
+  })
+
+  it('names the cookies it got when NSM sets no CSRF cookie', async () => {
+    const f = stubFetchNsm(new Response('{}', {
+      status: 200,
+      headers: new Headers([['content-type', 'application/json'], ['set-cookie', 'sessionid=sid-1; Path=/']]),
+    }))
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/CSRF/i)
+    expect(err.message).toContain('sessionid')
+    expect(err.message).not.toContain('sid-1')
+  })
+
+  it('reports the status when the NSM sso/login is refused', async () => {
+    const svc = makeNsmService(stubFetchNsm(json(403, { message: 'forbidden' })))
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/NSM sign-in .*HTTP 403/i)
+  })
+
+  it('returns no headers before the session exists, and forgets it on invalidate', async () => {
+    const f = stubFetchNsm()
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+    expect(svc.nsmAuthHeaders()).toEqual({})
+    await svc.nsmSession()
+    svc.invalidate()
+    expect(svc.nsmAuthHeaders()).toEqual({})
+  })
+
+  it('defaults nsmBaseUrl to the the platform NSM host', () => {
+    const svc = makeService(stubFetchNsm())
+    expect(svc.nsmBaseUrl).toBe('https://nsm.example.com')
+  })
+})
+
 const SIEM = 'https://siem.example'
 
 /**
