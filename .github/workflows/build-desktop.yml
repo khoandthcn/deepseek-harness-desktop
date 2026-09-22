@@ -74,9 +74,13 @@ jobs:
         with:
           node-version: '24'
 
+      # The build embeds no deployment: endpoints are read per machine at run
+      # time, so this needs no secret. DSH_SOC_PRESET_LABEL only names the
+      # preset in the UI.
       - name: Patch upstream (unsigned build, onboarding, Brave Search preset, SOC tools)
         env:
           DSH_SOC_BUILD_STAMP: ${{ github.run_number }}
+          DSH_SOC_PRESET_LABEL: ${{ vars.DSH_SOC_PRESET_LABEL }}
         run: node scripts/patch-upstream.mjs upstream
 
       # After the patch: it stamps the build's version onto the dsh family.
