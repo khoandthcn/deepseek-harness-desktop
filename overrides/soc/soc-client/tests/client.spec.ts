@@ -63,6 +63,48 @@ describe('SocHttp against the WAF bootstrap', () => {
     expect(second![1].headers['cookie']).toBe('D1N=df48dc607bd140bd08329c75679ce2e6')
   })
 
+  it('merges the WAF cookie into the caller\'s own Cookie header', async () => {
+    // The auth header producers send `Cookie` (capital C); a second `cookie`
+    // key would reach fetch as a comma-joined pair and lose the session.
+    const pages = [
+      new Response(WAF_BOOTSTRAP_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+      new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    ]
+    const f = vi.fn(async () => pages.shift()!)
+    const http = new SocHttp('https://soar.example', {
+      fetchImpl: f,
+      authHeaders: () => ({ Cookie: 'token=abc', Authorization: 'Bearer t' }),
+    })
+    expect(await http.postJson('/x', {})).toEqual({ ok: true })
+
+    const headers = callsOf(f)[1]![1].headers as Record<string, string>
+    const cookieKeys = Object.keys(headers).filter(key => key.toLowerCase() === 'cookie')
+    expect(cookieKeys).toHaveLength(1)
+    const cookie = headers[cookieKeys[0]!]!
+    expect(cookie).toContain('token=abc')
+    expect(cookie).toContain('D1N=df48dc607bd140bd08329c75679ce2e6')
+    expect(cookie).not.toContain(',')
+    // a real fetch would see exactly one Cookie header, with both pairs
+    expect(new Headers(headers).get('cookie')).toBe(cookie)
+    expect(headers.Authorization).toBe('Bearer t')
+  })
+
+  it('does not add the WAF cookie twice when the caller already carries it', async () => {
+    const pages = [
+      new Response(WAF_BOOTSTRAP_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+      new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    ]
+    const f = vi.fn(async () => pages.shift()!)
+    const http = new SocHttp('https://soar.example', {
+      fetchImpl: f,
+      authHeaders: () => ({ Cookie: 'D1N=df48dc607bd140bd08329c75679ce2e6' }),
+    })
+    await http.getJson('/x')
+    const headers = callsOf(f)[1]![1].headers as Record<string, string>
+    const cookie = new Headers(headers).get('cookie') ?? ''
+    expect(cookie.match(/D1N=/g)).toHaveLength(1)
+  })
+
   it('does not loop when the bootstrap page comes back a second time', async () => {
     const f = vi.fn(async () => new Response(WAF_BOOTSTRAP_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }))
     const http = new SocHttp('https://soar.example', { fetchImpl: f })

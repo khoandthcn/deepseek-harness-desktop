@@ -27,6 +27,17 @@ export interface EdrHttp {
 
 /** A search with no explicit window covers the last 24h, matching the SPA default. */
 const EDR_DEFAULT_WINDOW_SECONDS = 86400
+/**
+ * Whether a search should read the relative window. EDR carries both windows in
+ * one body and this flag decides which one counts, so an explicit absolute bound
+ * has to clear it or it would never take effect.
+ * @param options - the window options a search was given.
+ * @returns true when no absolute bound was given.
+ */
+function usesRelativeWindow(options: { fromTimestamp?: number | null | undefined, toTimestamp?: number | null | undefined }): boolean {
+  return (options.fromTimestamp ?? 0) === 0 && (options.toTimestamp ?? 0) === 0
+}
+
 /** Sort shapes the EDR API expects (an object, not a string). */
 const EDR_EVENT_SORT = { field: 'TimeStamp', direction: 'desc' } as const
 const EDR_ALERT_SORT = { field: 'timestamp_create', direction: 'desc' } as const
@@ -85,7 +96,9 @@ export class EdrAdapter {
   async searchEvents(options: SearchEventsOptions = {}): Promise<EdrSearchEnvelope<EdrEvent>> {
     const { limit = 50, sort = EDR_EVENT_SORT } = options
     const body = {
-      is_use_last_seconds: true,
+      // The flag picks which window the API reads: with it set, the absolute
+      // bounds this call also carries would be ignored.
+      is_use_last_seconds: usesRelativeWindow(options),
       keyQuickSearch: options.keyQuickSearch ?? '',
       last_seconds: options.lastSeconds ?? EDR_DEFAULT_WINDOW_SECONDS,
       since: options.since ?? 0,
@@ -109,7 +122,7 @@ export class EdrAdapter {
       last_seconds: options.lastSeconds ?? EDR_DEFAULT_WINDOW_SECONDS,
       from_timestamp: options.fromTimestamp ?? 0,
       to_timestamp: options.toTimestamp ?? 0,
-      is_use_last_seconds: true,
+      is_use_last_seconds: usesRelativeWindow(options),
     }
     const data = await this.http.postJson(EDR_PATHS.alertSearch, body)
     return parseEdrSearchEnvelope<EdrAlert>(data, 'data')

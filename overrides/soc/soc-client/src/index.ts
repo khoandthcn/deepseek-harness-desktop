@@ -54,7 +54,18 @@ export class SocHttp {
     }
     if (hasBody) headers['content-type'] = 'application/json'
     if (this.authHeaders) Object.assign(headers, this.authHeaders())
-    if (this.d1nCookie) headers['cookie'] = `D1N=${this.d1nCookie}`
+    if (this.d1nCookie) {
+      // The auth headers carry the session as `Cookie`; a second key differing
+      // only in case reaches `fetch` as a comma-joined pair, which is not cookie
+      // syntax and loses the session. Merge into the one header instead.
+      const existingKey = Object.keys(headers).find(key => key.toLowerCase() === 'cookie')
+      const existing = existingKey === undefined ? '' : headers[existingKey] ?? ''
+      if (existingKey !== undefined) delete headers[existingKey]
+      const pair = `D1N=${this.d1nCookie}`
+      headers['cookie'] = existing === '' ? pair
+        : /(^|;\s*)D1N=/.test(existing) ? existing
+          : `${existing}; ${pair}`
+    }
     return headers
   }
 

@@ -271,6 +271,35 @@ describe('establishSiemSession', () => {
     expect(String(callsOf(f)[2]![1].headers['cookie'])).toContain('gatekeeper_session=gk1')
   })
 
+  it('never echoes a token from the body it reports', async () => {
+    // A hop can answer with a token response (its own JSON, or an HTML page
+    // carrying one). The diagnostic quotes the body, so it must redact first:
+    // this message reaches the model and the session log.
+    const tokenBody = JSON.stringify({
+      access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.PAYLOADPAYLOADPAYLOAD.SIGNATURESIGNATURE',
+      id_token: 'IDTOKEN-abcdefghijklmnopqrstuvwxyz0123456789',
+      token_type: 'Bearer',
+    })
+    const f = sequenceFetch([
+      redirect(`${IAM}/oauth2/authorize?response_type=code&client_id=siem-iam`),
+      new Response(tokenBody, { status: 200, headers: { 'content-type': 'application/json' } }),
+    ])
+    const failure = establishSiemSession({
+      siemBaseUrl: SIEM, clientId: 'cym_portal', audience: 'cym_api', scope: 'login',
+      cookies: { commonAuthId: 'abc123' }, fetchImpl: f as any,
+    })
+    await expect(failure).rejects.toThrow(/answered HTTP 200/)
+    const error = await failure.then(
+      () => { throw new Error('expected the SIEM follower to reject') },
+      (e: unknown) => e as Error,
+    )
+    expect(error.message).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')
+    expect(error.message).not.toContain('IDTOKEN-abcdefghijklmnopqrstuvwxyz0123456789')
+    // the shape still reaches the reader: keys and type stay
+    expect(error.message).toContain('access_token')
+    expect(error.message).toContain('redacted')
+  })
+
   it('reports the gatekeeper\'s error and the hop trail when it refuses at the redirect_uri', async () => {
     // Observed live: IAM hands the gatekeeper its code, and the gatekeeper then
     // sends the browser to the redirect_uri with `?error=invalid_request`.

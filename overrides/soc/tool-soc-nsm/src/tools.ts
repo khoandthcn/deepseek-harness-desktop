@@ -83,6 +83,21 @@ export const NSM_PATHS = {
   modelMap: '/api/v1/config/model_map/',
 } as const
 
+/**
+ * The search endpoint dispatches on its query string as well as on the body:
+ * alerts are global, while raw network events are served per tenant and sensor
+ * and must name both, in the query string and again in `url_params`.
+ * @param docType - `alert` or `event`.
+ * @param scope - the tenant and sensor an event search names.
+ * @returns the path with its query string.
+ */
+export function searchPath(docType: 'alert' | 'event', scope?: { tenant: string, sensor: string }): string {
+  const params = scope === undefined
+    ? `doc_type=${docType}`
+    : `doc_type=${docType}&tenant=${encodeURIComponent(scope.tenant)}&sensor=${encodeURIComponent(scope.sensor)}`
+  return `${NSM_PATHS.searchEvent}?${params}`
+}
+
 /** Default and maximum page sizes for the search tools. */
 export const NSM_DEFAULT_SIZE = 20
 export const NSM_MAX_SIZE = 200
@@ -153,35 +168,42 @@ export function resolveSize(size: unknown): number {
   return Math.min(Math.floor(size), NSM_MAX_SIZE)
 }
 
-/** The parsed alert search: the hits, the total match count and the window. */
-export interface NsmAlertSearchResult {
+/** The parsed search: the hits, the total match count and the window. */
+export interface NsmSearchResult {
   count: number
   returned: number
   window: NsmWindow
-  alerts: Record<string, unknown>[]
+  /** The rows, under `alerts` or `events` depending on what was searched. */
+  [rows: string]: unknown
 }
 
 /**
- * Parse an alert search response. Its `data` is `{ data: [...], aggr: {...} }`;
+ * Parse a search response. Its `data` is `{ data: [...], aggr: {...} }`;
  * `count` on the envelope is the total number of matches, while `returned`
  * reports how many rows came back. The bulky nested event copies are dropped.
  * @param payload - the raw upstream JSON.
  * @param window - the window the search ran over, echoed back for the model.
+ * @param kind - which rows these are, which also names them in the result.
  */
-export function parseNsmAlertSearch(payload: unknown, window: NsmWindow): NsmAlertSearchResult {
-  const { data, count } = unwrapNsm(payload, 'alert search')
+export function parseNsmSearch(
+  payload: unknown,
+  window: NsmWindow,
+  kind: 'alerts' | 'events' = 'alerts',
+): NsmSearchResult {
+  const what = kind === 'alerts' ? 'alert search' : 'event search'
+  const { data, count } = unwrapNsm(payload, what)
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new NsmContractError(`Expected an NSM alert search result, got ${describe(data)}`)
+    throw new NsmContractError(`Expected an NSM ${what} result, got ${describe(data)}`)
   }
   const rows = (data as Record<string, unknown>).data ?? []
-  if (!Array.isArray(rows)) throw new NsmContractError('NSM alert search `data.data` must be an array')
-  const alerts = rows.map((row) => {
+  if (!Array.isArray(rows)) throw new NsmContractError(`NSM ${what} \`data.data\` must be an array`)
+  const hits = rows.map((row) => {
     if (typeof row !== 'object' || row === null) return { value: row } as Record<string, unknown>
     const copy = { ...(row as Record<string, unknown>) }
     for (const field of NSM_BULKY_ALERT_FIELDS) delete copy[field]
     return copy
   })
-  return { count, returned: alerts.length, window, alerts }
+  return { count, returned: hits.length, window, [kind]: hits }
 }
 
 /** One bucket of a group-by: the value and how many alerts carry it. */
@@ -361,16 +383,24 @@ export function createNsmToolDefs({ http, auth, now }: CreateNsmToolDefsOptions)
     }
   }
 
-  /** The body NSM's alert search and group-by share. */
-  const searchBody = (args: Record<string, any>, window: NsmWindow) => ({
+  /** The body NSM's searches and its group-by share. */
+  const searchBody = (args: Record<string, any>, window: NsmWindow, docType: 'alert' | 'event' = 'alert') => ({
     search_type: 'advance_search',
     data: {
       time: { from: window.from, to: window.to },
       query: typeof args.query === 'string' ? args.query : '',
       groupby: { field: '' },
     },
-    doc_type: 'alert',
+    doc_type: docType,
     request_cache: true,
+  })
+
+  /** Paging and ordering, as the search endpoint spells them. */
+  const paging = (args: Record<string, any>, defaultSortField: string) => ({
+    size: resolveSize(args.size),
+    from: typeof args.from === 'number' && args.from > 0 ? Math.floor(args.from) : 0,
+    sort_field: typeof args.sort_field === 'string' ? args.sort_field : defaultSortField,
+    sort_type: args.sort_type === 'asc' ? 'asc' : 'desc',
   })
 
   return [
@@ -386,8 +416,9 @@ export function createNsmToolDefs({ http, auth, now }: CreateNsmToolDefsOptions)
     {
       name: 'nsm_list_tenants',
       description:
-        'List the NSM tenant ids this account may search. An alert search can be narrowed to one'
-        + ' tenant, so call this when the user names a customer rather than a tenant id.',
+        'List the NSM tenant ids this account may search. A raw event search (nsm_search_events) is'
+        + ' served per tenant and names one, so call this when the user names a customer rather than'
+        + ' a tenant id. Alert search spans every tenant the account can see and needs no tenant.',
       parameters: {},
       output: JSON_OUTPUT,
       execute: guarded(async () => parseNsmTenants(await http.getJson(NSM_PATHS.tenants))),
@@ -429,14 +460,51 @@ export function createNsmToolDefs({ http, auth, now }: CreateNsmToolDefsOptions)
       output: JSON_OUTPUT,
       execute: guarded(async (args) => {
         const window = resolveWindow(args, clock())
-        const raw = await http.postJson(NSM_PATHS.searchEvent, {
+        const raw = await http.postJson(searchPath('alert'), {
           ...searchBody(args, window),
-          size: resolveSize(args.size),
-          from: typeof args.from === 'number' && args.from > 0 ? Math.floor(args.from) : 0,
-          sort_field: typeof args.sort_field === 'string' ? args.sort_field : '_create_time',
-          sort_type: args.sort_type === 'asc' ? 'asc' : 'desc',
+          ...paging(args, '_create_time'),
+          graph: true,
+          graph_group_by_field: 'alert_severity',
         })
-        return parseNsmAlertSearch(raw, window)
+        return parseNsmSearch(raw, window)
+      }),
+    },
+    {
+      name: 'nsm_search_events',
+      description:
+        'Search the raw network events one NSM sensor recorded, newest first. Events are the traffic'
+        + ' records behind the alerts, so use this to see what a sensor actually saw. Unlike alert'
+        + ' search this is served per sensor: name both the tenant and the sensor, from'
+        + ' nsm_list_sensors. ' + QUERY_HINT.replace('alert fields', 'event fields'),
+      parameters: {
+        tenant: { type: 'string', required: true, description: 'Tenant id owning the sensor, from nsm_list_sensors.' },
+        sensor: { type: 'string', required: true, description: 'Sensor id to read, from nsm_list_sensors.' },
+        query: { type: 'string', description: 'NSM event query; empty matches every event in the window.' },
+        last_seconds: { type: 'integer', description: 'Window length back from now, in seconds (default 3600).' },
+        time_from: { type: 'integer', description: 'Window start, epoch milliseconds. Overrides last_seconds.' },
+        time_to: { type: 'integer', description: 'Window end, epoch milliseconds. Defaults to now.' },
+        size: { type: 'integer', description: `Events to return, 1-${NSM_MAX_SIZE} (default ${NSM_DEFAULT_SIZE}).` },
+        from: { type: 'integer', description: 'Offset into the result set, for paging (default 0).' },
+        sort_field: { type: 'string', description: 'Field to sort on (default `@timestamp`).' },
+        sort_type: { type: 'string', enum: ['desc', 'asc'], description: 'Sort direction (default `desc`).' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(async (args) => {
+        const tenant = String(args.tenant ?? '')
+        const sensor = String(args.sensor ?? '')
+        if (tenant === '' || sensor === '') {
+          throw new NsmContractError('nsm_search_events needs both tenant and sensor; call nsm_list_sensors first.')
+        }
+        const window = resolveWindow(args, clock())
+        const raw = await http.postJson(searchPath('event', { tenant, sensor }), {
+          ...searchBody(args, window, 'event'),
+          ...paging(args, '@timestamp'),
+          // The distributed search reaches the sensor itself, which is also why
+          // the scope is repeated here: the endpoint reads it from both places.
+          enable_distributed_event: true,
+          url_params: `&tenant=${tenant}&sensor=${sensor}`,
+        })
+        return parseNsmSearch(raw, window, 'events')
       }),
     },
     {

@@ -11,3 +11,6 @@ docs/
 
 # Real SOC endpoints for local builds. Internal systems: never committed.
 soc-endpoints.json
+
+# npm lockfiles from local package experiments: the patcher never copies them.
+overrides/soc/*/package-lock.json

@@ -104,9 +104,24 @@ describe('authenticated happy paths', () => {
       fromTimestamp: 100,
       toTimestamp: 200,
       limit: 25,
-      sort: '-timestamp',
+      // the model writes a string; the API wants { field, direction }
+      sort: { field: 'timestamp', direction: 'desc' },
     })
     expect(out).toEqual({ total: 1, items: [{ _id: 'e1' }] })
+  })
+
+  it('reads an ascending sort and leaves an absent one to the adapter default', async () => {
+    const { adapter, byName } = defs(true)
+    await byName('edr_search_alerts').execute({ sort: 'timestamp_create' })
+    expect(callsOf(adapter.searchAlerts)[0]![0].sort).toEqual({ field: 'timestamp_create', direction: 'asc' })
+    await byName('edr_search_alerts').execute({})
+    expect(callsOf(adapter.searchAlerts)[1]![0].sort).toBeUndefined()
+  })
+
+  it('passes an agent filter object through unchanged', async () => {
+    const { adapter, byName } = defs(true)
+    await byName('edr_search_agents').execute({ query: { hostname: 'web-01' } })
+    expect(callsOf(adapter.searchAgents)[0]![0].query).toEqual({ hostname: 'web-01' })
   })
 
   it('edr_search_alerts forwards query and time window', async () => {

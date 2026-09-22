@@ -443,8 +443,17 @@ export function createSiemToolDefs({ http, auth, now, newQueryId }: CreateSiemTo
       execute: guarded(async (args) => {
         const window = resolveWindow(args, clock())
         const raw = await http.postJson(SIEM_PATHS.eventSearch, searchBody(args, window, true))
-        const parsed = parseSiemEventSearch(raw, window)
-        return { count: parsed.count, window }
+        // A counting request returns no rows, so the row-count fallback in the
+        // shared parser would report 0 for a malformed response. For a tool whose
+        // whole output is the number, that is indistinguishable from "no matches".
+        const count = (raw as { count?: unknown } | null)?.count
+        if (typeof count !== 'number') {
+          throw new SiemContractError(
+            `SIEM returned no count for the counting search (response keys: ${
+              raw !== null && typeof raw === 'object' ? Object.keys(raw).join(', ') : typeof raw})`,
+          )
+        }
+        return { count, window }
       }),
     },
     {

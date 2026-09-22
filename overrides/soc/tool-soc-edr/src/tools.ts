@@ -119,6 +119,26 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
     }
   }
 
+  /**
+   * Sort is declared as a string because that is what a model writes, while the
+   * API wants `{ field, direction }`. Translate here rather than shipping the
+   * string, which the API would ignore.
+   * @param sort - `field` or `-field`, or nothing.
+   * @returns the sort object, or undefined so the caller's default applies.
+   */
+  const parseSort = (sort: unknown): { field: string, direction: 'asc' | 'desc' } | undefined => {
+    if (typeof sort !== 'string' || sort.trim() === '') return undefined
+    const trimmed = sort.trim()
+    return trimmed.startsWith('-')
+      ? { field: trimmed.slice(1), direction: 'desc' }
+      : { field: trimmed, direction: 'asc' }
+  }
+
+  const SORT_PARAM: ToolParamSpec = {
+    type: 'string',
+    description: 'Sort field; prefix with "-" for descending, e.g. "-TimeStamp".',
+  }
+
   const timeWindow: Record<string, ToolParamSpec> = {
     last_seconds: {
       type: 'integer',
@@ -153,7 +173,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
           description: 'A quick free-text keyword to match across common event fields.',
         },
         ...timeWindow,
-        sort: { type: 'string', description: 'Sort field; prefix with "-" for descending.' },
+        sort: SORT_PARAM,
       },
       output: JSON_OUTPUT,
       execute: guarded(args => adapter.searchEvents({
@@ -163,7 +183,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         fromTimestamp: args.from_timestamp,
         toTimestamp: args.to_timestamp,
         limit: args.limit,
-        sort: args.sort,
+        sort: parseSort(args.sort),
       })),
     },
     {
@@ -178,7 +198,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
           description: 'Raw EDR search expression, sent as search_query_str.',
         },
         ...timeWindow,
-        sort: { type: 'string', description: 'Sort field; prefix with "-" for descending.' },
+        sort: SORT_PARAM,
       },
       output: JSON_OUTPUT,
       execute: guarded(args => adapter.searchAlerts({
@@ -187,7 +207,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         fromTimestamp: args.from_timestamp,
         toTimestamp: args.to_timestamp,
         limit: args.limit,
-        sort: args.sort,
+        sort: parseSort(args.sort),
       })),
     },
     {
@@ -198,8 +218,9 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         + EDR_NOTES,
       parameters: {
         query: {
-          type: 'string',
-          description: 'Raw EDR agent search expression, e.g. matching a hostname.',
+          type: 'json',
+          description:
+            'Agent filter object, as EDR spells it, e.g. {"hostname": "web-01"}. Omit to list every agent.',
         },
         since: { type: 'integer', description: 'A `since` cursor, in epoch MILLISECONDS.' },
         limit: { type: 'integer', description: 'Maximum agents to return. Defaults to 50.' },

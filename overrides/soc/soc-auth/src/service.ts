@@ -1,17 +1,16 @@
 /**
  * `SocAuthService` — the single holder of SOC session state.
  *
- * It is deliberately **dependency-free** (no `@deepseek-ai/*` imports) so it can
- * be unit-tested standalone; `index.ts` is the thin Cordis wrapper that exposes
- * an instance as `ctx.socAuth`.
+ * It depends on no Cordis surface (only the HTTP client and the WSO2 flow next
+ * to it), so it is unit-testable standalone; `index.ts` is the thin Cordis
+ * wrapper that exposes an instance as `ctx.socAuth`.
  *
  * Responsibilities:
  *  - `login(otp)` drives the WSO2 single-shot flow (`runWso2Login`) and keeps the
  *    resulting SOC access token plus the session cookie jar.
- *  - `soarBearer()` exchanges that session for a SOAR Bearer via
- *    `POST {soarBaseUrl}/access_control/access` and caches it until it expires.
- *
- * Ported from the tested Python equivalent `socp_mcp/auth/soar_refresh.py`.
+ *  - One credential per system, each acquired lazily from that session and cached
+ *    until it expires: SOAR Bearers per scope, the EDR access token, SIEM tokens
+ *    per audience and scope, and the NSM session cookies.
  *
  * Secrets rule: the password and the OTP are never logged and never appear in a
  * thrown message.
@@ -239,8 +238,29 @@ export class SocAuthService {
     this.cookies = cookies
   }
 
+  /**
+   * The session's generation. Every credential exchange reads it when it starts
+   * and again before it writes: an exchange that was in flight when the session
+   * was dropped must not repopulate a credential behind it.
+   */
+  private generation = 0
+
+  /**
+   * Refuse a write from an exchange that outlived its session.
+   * @param generation - the generation the exchange started in.
+   * @throws when the session has been invalidated since.
+   */
+  private assertCurrent(generation: number): void {
+    if (generation !== this.generation) {
+      throw new SocAuthError(
+        'SOC auth: the SOC session was logged out while this request was in flight — log in again with a new OTP.',
+      )
+    }
+  }
+
   /** Forget the SOC session and any cached SOAR bearer. */
   invalidate(): void {
+    this.generation += 1
     this.socToken = null
     this.cookies = {}
     this.soarCookies = {}
@@ -309,23 +329,16 @@ export class SocAuthService {
       .join('; ')
   }
 
-  /**
-   * Acquire the SOAR per-system session: run SOAR's own authorize on top of the
-   * SSO login, exchange the returned code at `authen/callback` for a
-   * `session_token`, and build the `token` cookie SOAR keys on. That cookie is
-   * not a Set-Cookie — the SOAR SPA builds it in the browser as
-   * `JSON.stringify({ token: session_token, id_token })`, so we build it the
-   * same way here. The value is never logged.
-   * @returns the cookie jar to send on SOAR requests: `token` plus the WAF `D1N`.
-   */
   /** Acquire the SOAR session once and reuse it for every scope exchange. */
   private async ensureSoarSession(
     doFetch: FetchLike,
   ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
     if (this.soarSession) return this.soarSession
     if (!this.sessionInflight) {
+      const generation = this.generation
       this.sessionInflight = this.acquireSoarSession(doFetch)
         .then((session) => {
+          this.assertCurrent(generation)
           this.soarSession = session
           this.soarCookies = session.cookies
           return session
@@ -335,6 +348,16 @@ export class SocAuthService {
     return this.sessionInflight
   }
 
+  /**
+   * Acquire the SOAR per-system session: run SOAR's own authorize on top of the
+   * SSO login, exchange the returned code at `authen/callback` for a
+   * `session_token`, and build the `token` cookie SOAR keys on. That cookie is
+   * not a Set-Cookie — the SOAR SPA builds it in the browser as
+   * `JSON.stringify({ token: session_token, id_token })`, so we build it the
+   * same way here. The value is never logged.
+   * @param doFetch - the fetch implementation to drive.
+   * @returns the session token and the cookie jar to send on SOAR requests.
+   */
   private async acquireSoarSession(
     doFetch: FetchLike,
   ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
@@ -431,17 +454,14 @@ export class SocAuthService {
   }
 
   /**
-   * Headers for an EDR request. The EDR SPA carries its credential as a cookie
-   * named `access_token` (no Authorization header), so that is what we send,
-   * plus the WAF `D1N` cookie when present. If a real run ever answers 401 with
-   * this carrier, switch here to a Bearer header instead:
-   *   `return { Authorization: \`Bearer ${this.edrCred?.token}\` }`
+   * Headers for an EDR request: the access token as a Bearer, plus the cookies
+   * EDR also sets. The SPA's request layer sets `Authorization: Bearer <token>`
+   * from the stored access token (`setAuthData`), while the `access_token`
+   * cookie it writes alongside only tracks expiry — sending that cookie alone
+   * reads as anonymous, which a live run confirmed (most endpoints answered 200
+   * with nothing, and threat hunting answered 401).
    */
   edrAuthHeaders(): Record<string, string> {
-    // The EDR SPA's request layer sets `Authorization: Bearer <token>` from the
-    // stored access token (`setAuthData`); the `access_token` cookie it also
-    // writes only tracks expiry. Sending the cookie alone reads as anonymous:
-    // most endpoints answered 200 with nothing and threatHunting answered 401.
     const headers: Record<string, string> = {}
     if (this.edrCred) headers.Authorization = `Bearer ${this.edrCred.token}`
     const cookie = Object.entries(this.edrCookies).map(([k, v]) => `${k}=${v}`).join('; ')
@@ -450,6 +470,7 @@ export class SocAuthService {
   }
 
   private async exchangeEdrToken(): Promise<string> {
+    const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     // EDR reuses the WSO2 SSO login; the session token is the SOC token it
     // exchanges for an EDR credential. Scope is EDR's own read scope.
@@ -481,9 +502,14 @@ export class SocAuthService {
           return ''
         }
       }).catch(() => '')
-      this.invalidate()
+      // EDR alone refused: drop only what EDR holds. Tearing the whole SOC
+      // session down here would force a new OTP for SOAR, SIEM and NSM, which
+      // may well still be working — an account not enabled on EDR reads the same.
+      this.edrCred = null
+      this.edrCookies = {}
       throw new SocAuthError(
-        `SOC auth: EDR rejected the SOC session (HTTP ${res.status}${detail ? `: ${detail}` : ''}). Log in again with a new OTP.`,
+        `SOC auth: EDR rejected the SOC session (HTTP ${res.status}${detail ? `: ${detail}` : ''}). `
+        + 'The account may not be enabled on EDR; if the other systems fail too, log in again with a new OTP.',
       )
     }
 
@@ -505,6 +531,7 @@ export class SocAuthService {
     }
 
     const expiresIn = Number(payload?.expired_in_seconds ?? 3600)
+    this.assertCurrent(generation)
     this.edrCred = {
       token,
       exp: this.now() + (Number.isFinite(expiresIn) ? expiresIn : 3600) * 1000,
@@ -567,6 +594,7 @@ export class SocAuthService {
   private async ensureSiemLogin(doFetch: FetchLike): Promise<Record<string, string>> {
     if (this.siemJar) return this.siemJar
     if (!this.siemLoginInflight) {
+      const generation = this.generation
       this.siemLoginInflight = (async () => {
         const { code, cookies } = await establishSiemSession({
           siemBaseUrl: this.siemBaseUrl,
@@ -584,6 +612,7 @@ export class SocAuthService {
           throw error
         })
         const { jar } = await this.redeemSiemCode(doFetch, code, SIEM_PORTAL_AUDIENCE, cookies, 'login')
+        this.assertCurrent(generation)
         this.siemJar = jar
         return jar
       })().finally(() => {
@@ -594,6 +623,7 @@ export class SocAuthService {
   }
 
   private async exchangeSiemToken(audience: string, scope: string): Promise<string> {
+    const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     const jar = await this.ensureSiemLogin(doFetch)
     const { code, cookies } = await establishSiemSession({
@@ -613,6 +643,7 @@ export class SocAuthService {
       throw error
     })
     const { payload, jar: after } = await this.redeemSiemCode(doFetch, code, audience, cookies, `${audience}/${scope}`)
+    this.assertCurrent(generation)
     this.siemJar = after
     const token = payload.access_token as string
     const type = typeof payload?.token_type === 'string' && payload.token_type.length > 0
@@ -745,6 +776,7 @@ export class SocAuthService {
   }
 
   private async establishNsmSession(): Promise<void> {
+    const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     const { sessionToken, cookies } = await this.acquireSessionToken(doFetch, {
       system: 'NSM',
@@ -792,6 +824,7 @@ export class SocAuthService {
         + `(cookies held: [${Object.keys(jar).sort().join(', ')}]).`,
       )
     }
+    this.assertCurrent(generation)
     this.nsmCred = {
       cookies: jar,
       csrfHeader: csrf,
@@ -801,6 +834,7 @@ export class SocAuthService {
   }
 
   private async exchangeSoarBearer(scope: string): Promise<string> {
+    const generation = this.generation
     const doFetch: FetchLike = this.fetchImpl ?? ((input, init) => fetch(input, init))
     // SOAR runs its own OIDC authorize on top of the SSO login; the session is
     // scope-independent, so it is acquired once and reused across scopes.
@@ -843,10 +877,13 @@ export class SocAuthService {
           return ''
         }
       }).catch(() => '')
-      this.invalidate()
+      // Only SOAR's own credentials go: see the EDR path above.
+      this.soarSession = null
+      this.soarCookies = {}
+      this.soarBearers.clear()
       throw new SocAuthError(
         `SOC auth: SOAR rejected the SOC session (HTTP ${res.status}${detail ? `: ${detail}` : ''}); `
-        + `cookies sent: [${held}]. Log in again with a new OTP.`,
+        + `cookies sent: [${held}]. If the other systems fail too, log in again with a new OTP.`,
       )
     }
 
@@ -868,6 +905,7 @@ export class SocAuthService {
     }
 
     const expiresIn = Number(payload?.expires_in ?? 3600)
+    this.assertCurrent(generation)
     this.soarBearers.set(scope, {
       token,
       exp: this.now() + (Number.isFinite(expiresIn) ? expiresIn : 3600) * 1000,

@@ -212,7 +212,9 @@ describe('SocAuthService.soarBearer', () => {
     expect(err.message).toMatch(/SOAR rejected the SOC session/i)
     expect(err.message).toContain('401')
     expect(err.message).toContain('cookies sent: [')
-    expect(svc.isAuthenticated()).toBe(false)
+    // only SOAR's own credentials go: the SOC session still serves EDR/SIEM/NSM
+    expect(svc.isAuthenticated()).toBe(true)
+    expect(svc.authHeadersForSoar(SCOPE).Authorization).toBeUndefined()
   })
 
   it('reports a SOAR rejection, naming the cookies sent, on 403', async () => {
@@ -376,14 +378,17 @@ describe('SocAuthService.edrToken', () => {
     expect(edrCalls(f)).toHaveLength(2)
   })
 
-  it('reports an EDR rejection and forces a fresh login on 401', async () => {
+  it('reports an EDR rejection on 401 without dropping the SOC session', async () => {
     const svc = makeEdrService(stubFetchEdr([json(401, { message: 'unauthorized' })]))
     await svc.login(OTP)
 
     const err = await expectNoSecrets(svc.edrToken())
     expect(err.message).toMatch(/EDR rejected the SOC session/i)
     expect(err.message).toContain('401')
-    expect(svc.isAuthenticated()).toBe(false)
+    expect(err.message).toMatch(/may not be enabled on EDR/)
+    // the other systems keep working; only EDR's own credential is dropped
+    expect(svc.isAuthenticated()).toBe(true)
+    expect(svc.edrAuthHeaders()).toEqual({})
   })
 
   it('rejects with a malformed/WAF error on a non-JSON response', async () => {
@@ -432,6 +437,49 @@ describe('SocAuthService.edrAuthHeaders', () => {
   it('defaults edrBaseUrl to the the platform EDR host', () => {
     const svc = makeService(stubFetchEdr([]))
     expect(svc.edrBaseUrl).toBe('https://edr.example.com')
+  })
+})
+
+describe('SocAuthService session lifetime', () => {
+  it('does not let an in-flight exchange revive a session that was invalidated', async () => {
+    // The exchange is already running when the session is dropped; its write
+    // must not land, or the service holds a credential while logged out.
+    let release: (res: Response) => void = () => {}
+    const pending = new Promise<Response>((resolve) => { release = resolve })
+    let iam = 0
+    const wso2 = wso2HappyPath()
+    const f = vi.fn(async (url: string) => {
+      const u = String(url)
+      if (u.startsWith(`${EDR}/authentication/GetAccessTokenBySocToken`)) return pending
+      if (u.startsWith(`${IAM}/authen/callback`)) return json(200, { session_token: 'EDR-SESSION' })
+      if (u.startsWith(`${IAM}/oauth2/authorize`) && u.includes('client_id=EDR')) {
+        return redirect(`${EDR}/v2/callback?code=EDRCODE`)
+      }
+      const res = wso2[iam++]
+      if (!res) throw new Error('unexpected extra WSO2 fetch call')
+      return res
+    })
+    const svc = makeService(f, () => 1_000_000, { edrBaseUrl: EDR })
+    await svc.login(OTP)
+
+    const inflight = svc.edrToken()
+    svc.invalidate()
+    release(json(200, { access_token: 'EDR-LATE', expired_in_seconds: 3600 }))
+    await expect(inflight).rejects.toThrow(/logged out|log in again/i)
+
+    expect(svc.isAuthenticated()).toBe(false)
+    expect(svc.edrAuthHeaders()).toEqual({})
+  })
+
+  it('keeps the other systems when EDR alone rejects the session', async () => {
+    const f = stubFetchEdr([json(401, { message: 'not enabled for EDR' })])
+    const svc = makeEdrService(f)
+    await svc.login(OTP)
+
+    const err = await expectNoSecrets(svc.edrToken())
+    expect(err.message).toMatch(/EDR/)
+    // the SOC session itself is untouched: SOAR and SIEM still have one
+    expect(svc.isAuthenticated()).toBe(true)
   })
 })
 

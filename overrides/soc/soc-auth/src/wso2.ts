@@ -253,32 +253,6 @@ export interface SiemSessionOptions {
 }
 
 /**
- * Obtain a SIEM authorization code on top of an existing WSO2 SSO login.
- *
- * SIEM runs its OWN OAuth authorization server — not the WSO2 per-scope authorize
- * (SOAR) nor the token-exchange endpoint (EDR). The observed flow (from a HAR
- * capture whose token exchange 401'd, so only the SHAPES are known) is:
- *
- *   GET {siemBaseUrl}/oauth/authorize?client_id=…&audience=…&scope=…
- *       &response_type=code&redirect_uri={siemBaseUrl}&include_granted_scope=false
- *
- * carrying the SSO cookies, expected to 302 to `{siemBaseUrl}?…&code=<code>` — the
- * code lands on the `redirect_uri`, which is the SIEM host itself (no path). This
- * follows that chain, carrying and collecting cookies and adopting the WAF `D1N`
- * bootstrap if it appears, and returns the code plus the collected cookies.
- *
- * A SIEM-local follower rather than a reuse of {@link establishAppSession}: that
- * helper is hardwired to the IAM host's `/oauth2/authorize` and a `redirect_uri`
- * carrying a path, while SIEM's authorize is on its own host with a different
- * query shape (audience, include_granted_scope) and a path-less redirect_uri.
- *
- * @returns the authorization `code` from the SIEM redirect and the cookies
- *   collected on the way (the WAF `D1N`), for the caller to exchange at
- *   `{siemBaseUrl}/oauth/token`.
- * @throws when the chain lands back on the login form: the SSO session is gone,
- *   so a fresh {@link runWso2Login} (a new OTP) is required.
- */
-/**
  * Find the app's authorization code inside an HTML body, for a gatekeeper that
  * redirects from script or a meta refresh rather than with a Location header.
  * Only a URL on the app's own redirect_uri (origin + path) counts.
@@ -314,6 +288,25 @@ function paramNamesOf(u: URL): string {
   return `query=[${q.join(',')}] hash=[${h.join(',')}]${hash ? ' (has fragment)' : ''}`
 }
 
+/** Names whose value is a credential wherever it appears, in JSON or in a URL. */
+const SECRET_NAMES = 'access_token|refresh_token|id_token|session_token|token|code|state|session_state|password|otp'
+
+/**
+ * Blank out anything credential-shaped in a body before it is quoted in an
+ * error. Three passes, because one body can carry all three forms: JSON fields,
+ * URL query parameters, and bare high-entropy runs (a JWT in an HTML page).
+ * Keys and structure survive, so the message still says what came back.
+ * @param body - the raw response body.
+ * @returns the body with every secret-shaped value replaced, whitespace collapsed.
+ */
+export function redactSecrets(body: string): string {
+  return body
+    .replace(new RegExp(`"(${SECRET_NAMES})"\\s*:\\s*"[^"]*"`, 'gi'), '"$1":"<redacted>"')
+    .replace(new RegExp(`[?&#]?\\b(${SECRET_NAMES})=[^&"'\\s;]+`, 'gi'), '$1=<redacted>')
+    .replace(/[A-Za-z0-9_-]{40,}(?:\.[A-Za-z0-9_-]+)*/g, '<redacted>')
+    .replace(/\s+/g, ' ')
+}
+
 /** Only these values may be echoed: they are OAuth error codes, never secrets. */
 function oauthErrorOf(u: URL): string | undefined {
   const error = u.searchParams.get('error')
@@ -329,6 +322,35 @@ function hopOf(u: URL): string {
   return `${u.host}${u.pathname}${names.length > 0 ? `?${names.join(',')}` : ''}`
 }
 
+/**
+ * Obtain a SIEM authorization code on top of an existing WSO2 SSO login.
+ *
+ * SIEM runs its OWN OAuth authorization server, with one audience per API group.
+ * Its gatekeeper first bounces to IAM and back to its own callback on the SIEM
+ * origin — that hop carries IAM's code, which the gatekeeper redeems server-side
+ * — and only then redirects to the app's `redirect_uri` (the bare origin) with
+ * the code this returns. The chain is followed rather than short-circuited,
+ * carrying and collecting cookies and adopting the WAF `D1N` bootstrap page if
+ * it appears.
+ *
+ * Callers run it twice per session: once for `cym_api`/`login`, which signs in
+ * and leaves the gatekeeper session in the jar, then once per API group.
+ *
+ * A SIEM-local follower rather than a reuse of {@link establishAppSession}: that
+ * helper is hardwired to the IAM host's `/oauth2/authorize` and a `redirect_uri`
+ * carrying a path, while SIEM's authorize is on its own host with a different
+ * query shape (audience, include_granted_scope) and a path-less redirect_uri.
+ *
+ * @param opts - the SIEM host, its OAuth client, the audience and scope to ask
+ *   for, and the cookies to ride.
+ * @returns the authorization `code` from the SIEM redirect and the cookies
+ *   collected on the way, for the caller to exchange at `/oauth/token`.
+ * @throws {SiemRefusalError} when the gatekeeper answers the redirect_uri with
+ *   an OAuth error instead of a code — for a per-API request, that is how it
+ *   says the account lacks the scope.
+ * @throws {SocAuthError} when the chain lands back on the login form: the SSO
+ *   session is gone, so a fresh {@link runWso2Login} (a new OTP) is required.
+ */
 export async function establishSiemSession(
   opts: SiemSessionOptions,
 ): Promise<{ code: string, cookies: Record<string, string> }> {
@@ -396,7 +418,7 @@ export async function establishSiemSession(
         : /document\.cookie\s*=\s*"D1N=/.test(body) ? 'WAF bootstrap'
         : /^\s*\{/.test(body) ? 'json'
         : 'html'
-      const snippet = body.replace(/\s+/g, ' ').replace(/[?&](code|state|session_state)=[^&"'\s]+/g, '$1=<redacted>').slice(0, 160)
+      const snippet = redactSecrets(body).slice(0, 160)
       const fetched = new URL(next)
       throw new SocAuthError(
         `SIEM auth: hop ${hop} (${fetched.origin}${fetched.pathname} ${paramNamesOf(fetched)}) answered HTTP ${res.status} (${res.headers.get('content-type') ?? 'no content-type'}; ${kind}) `

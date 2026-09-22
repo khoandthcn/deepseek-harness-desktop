@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createNsmToolDefs,
+  searchPath,
   NSM_DEFAULT_SIZE,
   NSM_MAX_SIZE,
   NSM_PATHS,
@@ -59,6 +60,7 @@ describe('createNsmToolDefs', () => {
       'nsm_list_sensors',
       'nsm_list_alert_fields',
       'nsm_search_alerts',
+      'nsm_search_events',
       'nsm_group_alerts',
     ])
   })
@@ -176,12 +178,13 @@ describe('nsm_search_alerts', () => {
 
   it('sends the search body the NSM app sends, defaulting to the last hour', async () => {
     const { http, byName } = defs(true, {
-      [NSM_PATHS.searchEvent]: envelope({ data: [hit], aggr: {} }, 433),
+      [searchPath('alert')]: envelope({ data: [hit], aggr: {} }, 433),
     })
     const out = await byName('nsm_search_alerts').execute({ query: 'src="22"' })
 
     const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, any>]
-    expect(path).toBe('/api/v1/custom_search_event')
+    // the endpoint dispatches on the query string too, not on the body alone
+    expect(path).toBe('/api/v1/custom_search_event?doc_type=alert')
     expect(body).toEqual({
       search_type: 'advance_search',
       data: { time: { from: NOW - 3600 * 1000, to: NOW }, query: 'src="22"', groupby: { field: '' } },
@@ -191,6 +194,8 @@ describe('nsm_search_alerts', () => {
       from: 0,
       sort_field: '_create_time',
       sort_type: 'desc',
+      graph: true,
+      graph_group_by_field: 'alert_severity',
     })
 
     // the nested event copies are dropped; the alert fields stay
@@ -200,7 +205,7 @@ describe('nsm_search_alerts', () => {
   })
 
   it('takes explicit epoch bounds over last_seconds, clamps the size and passes the sort', async () => {
-    const { http, byName } = defs(true, { [NSM_PATHS.searchEvent]: envelope({ data: [] }) })
+    const { http, byName } = defs(true, { [searchPath('alert')]: envelope({ data: [] }) })
     await byName('nsm_search_alerts').execute({
       time_from: 1000,
       time_to: 2000,
@@ -216,8 +221,36 @@ describe('nsm_search_alerts', () => {
   })
 
   it('rejects a payload whose rows are not an array', async () => {
-    const { byName } = defs(true, { [NSM_PATHS.searchEvent]: envelope({ data: {} }) })
+    const { byName } = defs(true, { [searchPath('alert')]: envelope({ data: {} }) })
     await expect(byName('nsm_search_alerts').execute({})).rejects.toThrow(/`data\.data` must be an array/)
+  })
+})
+
+describe('nsm_search_events', () => {
+  it('names the tenant and sensor in the path and in url_params', async () => {
+    const path = searchPath('event', { tenant: 'dcn', sensor: 'sensordaknong' })
+    const { http, byName } = defs(true, { [path]: envelope({ data: [{ _id: 'e1', src: '10.0.0.1' }] }, 7) })
+    const out = await byName('nsm_search_events').execute({ tenant: 'dcn', sensor: 'sensordaknong', query: '' })
+
+    const [calledPath, body] = callsOf(http.postJson)[0] as [string, Record<string, any>]
+    expect(calledPath).toBe('/api/v1/custom_search_event?doc_type=event&tenant=dcn&sensor=sensordaknong')
+    expect(body).toMatchObject({
+      doc_type: 'event',
+      enable_distributed_event: true,
+      url_params: '&tenant=dcn&sensor=sensordaknong',
+      sort_field: '@timestamp',
+      size: NSM_DEFAULT_SIZE,
+    })
+    // rows come back under `events`, not `alerts`
+    expect(out).toMatchObject({ count: 7, returned: 1 })
+    expect((out as any).events).toEqual([{ _id: 'e1', src: '10.0.0.1' }])
+    expect((out as any).alerts).toBeUndefined()
+  })
+
+  it('refuses without a tenant and a sensor rather than searching the wrong scope', async () => {
+    const { http, byName } = defs(true)
+    await expect(byName('nsm_search_events').execute({ tenant: 'dcn' })).rejects.toThrow(/tenant and sensor/)
+    expect(http.postJson).not.toHaveBeenCalled()
   })
 })
 

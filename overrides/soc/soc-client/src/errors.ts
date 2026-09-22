@@ -17,7 +17,15 @@ export class SocError extends Error {
   }
 }
 
-/** 401 / 403 — authentication or authorization failure. */
+/**
+ * 401 / 403 — authentication or authorization failure reported by an upstream
+ * SOC API.
+ *
+ * NOTE: `@deepseek-ai/dsh-soc-auth` exports a different class of the same name
+ * for failures of the login flow itself. They are unrelated types, so an
+ * `instanceof` check catches only the one whose module it imported. Match on
+ * both, or on `SocError`, when you mean "the session is the problem".
+ */
 export class SocAuthError extends SocError {}
 
 /** 404 — resource not found. */

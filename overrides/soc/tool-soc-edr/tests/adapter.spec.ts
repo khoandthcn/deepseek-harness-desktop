@@ -66,8 +66,26 @@ describe('EdrAdapter', () => {
     expect(body.search_query_str).toBe('severity = "high"')
     expect(body.from_timestamp).toBe(100)
     expect(body.to_timestamp).toBe(200)
-    expect(body.is_use_last_seconds).toBe(true)
+    // an absolute window only takes effect with the relative flag cleared
+    expect(body.is_use_last_seconds).toBe(false)
     expect(body.sort).toEqual({ field: 'timestamp_create', direction: 'desc' })
+  })
+
+  it('keeps the relative flag set when only last_seconds is given', async () => {
+    const { http, edr } = adapter({ [EDR_PATHS.eventSearch]: { total: 0, data: [] } })
+    await edr.searchEvents({ lastSeconds: 600 })
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(body.is_use_last_seconds).toBe(true)
+    expect(body.last_seconds).toBe(600)
+  })
+
+  it('clears the relative flag for an absolute event window', async () => {
+    const { http, edr } = adapter({ [EDR_PATHS.eventSearch]: { total: 0, data: [] } })
+    await edr.searchEvents({ fromTimestamp: 1000, toTimestamp: 2000 })
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(body.is_use_last_seconds).toBe(false)
+    expect(body.from_timestamp).toBe(1000)
+    expect(body.to_timestamp).toBe(2000)
   })
 
   it('search_agents parses agent_infos/total', async () => {

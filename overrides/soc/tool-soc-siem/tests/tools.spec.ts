@@ -232,6 +232,13 @@ describe('siem_count_events', () => {
   })
 })
 
+describe('siem_count_events', () => {
+  it('refuses to report 0 when the response carried no count', async () => {
+    const { byName } = defs(true, { [SIEM_PATHS.eventSearch]: { code: 0, data: [] } })
+    await expect(byName('siem_count_events').execute({})).rejects.toThrow(/no count/)
+  })
+})
+
 describe('siem_search_agents', () => {
   it('reduces each agent to its identity and platform', async () => {
     const { http, byName } = defs(true, {
