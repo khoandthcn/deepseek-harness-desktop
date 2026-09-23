@@ -474,6 +474,47 @@ describe('SocAuthService without endpoints', () => {
   })
 })
 
+describe('SocAuthService endpoints configured in the app', () => {
+  it('takes what the user configured over the machine\'s file, and re-reads it on each login', async () => {
+    let configured: Record<string, string> = { soarBaseUrl: 'https://typo.example' }
+    const svc = new SocAuthService({
+      endpoints: () => ({
+        values: { iamUrl: IAM, clientId: 'cid', redirectUri: REDIRECT_URI, soarBaseUrl: 'https://from-file.example' },
+        missing: [],
+        filePath: '/home/u/.dsh/soc-endpoints.json',
+      }),
+      endpointOverrides: async () => configured,
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      // two logins: one before the correction, one after
+      fetchImpl: stubFetch([], [...wso2HappyPath(), ...wso2HappyPath()]) as any,
+    })
+    await svc.login(OTP)
+    expect(svc.soarBaseUrl).toBe('https://typo.example')
+
+    // the user corrects it in the app and signs in again
+    configured = { soarBaseUrl: SOAR }
+    await svc.login(OTP)
+    expect(svc.soarBaseUrl).toBe(SOAR)
+  })
+
+  it('counts a configured value as supplied, so an otherwise empty machine can log in', async () => {
+    const svc = new SocAuthService({
+      endpoints: () => ({ values: {}, missing: ['iamUrl', 'clientId', 'redirectUri', 'soarBaseUrl'], filePath: '/x' }),
+      endpointOverrides: async () => ({
+        iamUrl: IAM,
+        clientId: 'cid',
+        redirectUri: REDIRECT_URI,
+        soarBaseUrl: SOAR,
+      }),
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: stubFetch([]) as any,
+    })
+    await svc.login(OTP)
+    expect(svc.isAuthenticated()).toBe(true)
+    expect(svc.iamUrl).toBe(IAM)
+  })
+})
+
 describe('SocAuthService session lifetime', () => {
   it('does not let an in-flight exchange revive a session that was invalidated', async () => {
     // The exchange is already running when the session is dropped; its write

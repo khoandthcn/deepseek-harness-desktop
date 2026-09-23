@@ -471,7 +471,17 @@ patch(
   "  | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'\n"
   + "  | 'socTitle' | 'socDescription'\n"
   + "  | 'socUsername' | 'socUsernameHint' | 'socUsernameSet' | 'socUsernameUnset'\n"
-  + "  | 'socPassword' | 'socPasswordHint' | 'socPasswordSet' | 'socPasswordUnset'\n",
+  + "  | 'socPassword' | 'socPasswordHint' | 'socPasswordSet' | 'socPasswordUnset'\n"
+  + "  | 'socValueSet' | 'socValueUnset'\n"
+  + "  | 'soc_iamUrl' | 'soc_iamUrlHint'\n"
+  + "  | 'soc_clientId' | 'soc_clientIdHint'\n"
+  + "  | 'soc_redirectUri' | 'soc_redirectUriHint'\n"
+  + "  | 'soc_soarBaseUrl' | 'soc_soarBaseUrlHint'\n"
+  + "  | 'soc_tenant' | 'soc_tenantHint'\n"
+  + "  | 'soc_soarClientId' | 'soc_soarClientIdHint'\n"
+  + "  | 'soc_edrBaseUrl' | 'soc_edrBaseUrlHint'\n"
+  + "  | 'soc_siemBaseUrl' | 'soc_siemBaseUrlHint'\n"
+  + "  | 'soc_nsmBaseUrl' | 'soc_nsmBaseUrlHint'\n",
 )
 patch(
   PLUGINS_LOCALES,
@@ -486,7 +496,28 @@ patch(
   + "  socPassword: 'Password',\n"
   + "  socPasswordHint: 'Stored outside the settings file. Leave blank to keep the current password.',\n"
   + "  socPasswordSet: 'A password is configured.',\n"
-  + "  socPasswordUnset: 'No password is configured.',\n}",
+  + "  socPasswordUnset: 'No password is configured.',\n"
+  + "  socValueSet: 'Configured.',\n"
+  + "  socValueUnset: 'Not configured.',\n"
+  + "  soc_iamUrl: 'Identity server URL',\n"
+  + "  soc_iamUrlHint: 'Your deployment\\'s value, e.g. https://iam.example. Leave blank to keep the current one.',\n"
+  + "  soc_clientId: 'Portal client id',\n"
+  + "  soc_clientIdHint: 'Your deployment\\'s value, e.g. CLIENT_ID. Leave blank to keep the current one.',\n"
+  + "  soc_redirectUri: 'Portal callback URL',\n"
+  + "  soc_redirectUriHint: 'Your deployment\\'s value, e.g. https://soc.example. Leave blank to keep the current one.',\n"
+  + "  soc_soarBaseUrl: 'SOAR API URL',\n"
+  + "  soc_soarBaseUrlHint: 'Your deployment\\'s value, e.g. https://soar.example. Leave blank to keep the current one.',\n"
+  + "  soc_tenant: 'Tenant',\n"
+  + "  soc_tenantHint: 'Your deployment\\'s value, e.g. MASTER. Leave blank to keep the current one.',\n"
+  + "  soc_soarClientId: 'SOAR client id',\n"
+  + "  soc_soarClientIdHint: 'Your deployment\\'s value. Leave blank to keep the current one.',\n"
+  + "  soc_edrBaseUrl: 'EDR API URL',\n"
+  + "  soc_edrBaseUrlHint: 'Your deployment\\'s value, e.g. https://edr.example. Leave blank to keep the current one.',\n"
+  + "  soc_siemBaseUrl: 'SIEM API URL',\n"
+  + "  soc_siemBaseUrlHint: 'Your deployment\\'s value, e.g. https://siem.example. Leave blank to keep the current one.',\n"
+  + "  soc_nsmBaseUrl: 'NSM API URL',\n"
+  + "  soc_nsmBaseUrlHint: 'Your deployment\\'s value, e.g. https://nsm.example. Leave blank to keep the current one.',\n"
+  + "}",
 )
 patch(
   PLUGINS_LOCALES,
@@ -501,7 +532,28 @@ patch(
   + "  socPassword: '密码',\n"
   + "  socPasswordHint: '不写入设置文件。留空表示保持当前密码。',\n"
   + "  socPasswordSet: '已配置密码。',\n"
-  + "  socPasswordUnset: '未配置密码。',\n}",
+  + "  socPasswordUnset: '未配置密码。',\n"
+  + "  socValueSet: '已配置。',\n"
+  + "  socValueUnset: '未配置。',\n"
+  + "  soc_iamUrl: '身份服务器地址',\n"
+  + "  soc_iamUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_clientId: '门户 client id',\n"
+  + "  soc_clientIdHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_redirectUri: '门户回调地址',\n"
+  + "  soc_redirectUriHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_soarBaseUrl: 'SOAR API 地址',\n"
+  + "  soc_soarBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_tenant: '租户',\n"
+  + "  soc_tenantHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_soarClientId: 'SOAR client id',\n"
+  + "  soc_soarClientIdHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_edrBaseUrl: 'EDR API 地址',\n"
+  + "  soc_edrBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_siemBaseUrl: 'SIEM API 地址',\n"
+  + "  soc_siemBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_nsmBaseUrl: 'NSM API 地址',\n"
+  + "  soc_nsmBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "}",
 )
 
 // The generated slot inventory enumerates the settings.plugin.item occupants.

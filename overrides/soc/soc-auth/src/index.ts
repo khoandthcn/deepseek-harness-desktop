@@ -32,7 +32,51 @@ export const name = 'soc-auth'
  * to appear. Its schema is therefore empty.
  */
 export const SOC_CREDENTIALS_NS = 'soc-credentials'
-const SocCredentialsSection = z.object({})
+/**
+ * The settings section behind the SOC Cloud card. The username and password are
+ * NOT here — they go through the credentials domain, so their literals never
+ * ride a response. The endpoints do: they are configuration, not secrets, and a
+ * user who installed a public build has to be able to type them in.
+ */
+const SocCredentialsSection = z.object({
+  iamUrl: z.string().default(''),
+  clientId: z.string().default(''),
+  redirectUri: z.string().default(''),
+  soarBaseUrl: z.string().default(''),
+  tenant: z.string().default(''),
+  soarClientId: z.string().default(''),
+  edrBaseUrl: z.string().default(''),
+  siemBaseUrl: z.string().default(''),
+  nsmBaseUrl: z.string().default(''),
+})
+
+/**
+ * The endpoint fields the SOC Cloud card writes, in the order it renders them,
+ * each stored under the credential reference of the same shape as the username
+ * and password. They are configuration rather than secrets, but that store is
+ * the one the card can write to, and it keeps every SOC setting in one place.
+ */
+export const SOC_ENDPOINT_FIELDS = [
+  'iamUrl',
+  'clientId',
+  'redirectUri',
+  'soarBaseUrl',
+  'tenant',
+  'soarClientId',
+  'edrBaseUrl',
+  'siemBaseUrl',
+  'nsmBaseUrl',
+] as const
+
+/**
+ * The credential reference one endpoint field is stored under, e.g.
+ * `iamUrl` → `SOC_IAM_URL`.
+ * @param field - the endpoint field name.
+ * @returns the reference to read or write.
+ */
+export function endpointRef(field: string): string {
+  return `SOC_${field.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`
+}
 
 /**
  * Nothing is strictly required: credentials come from `ctx.credentials` when
@@ -123,10 +167,31 @@ export function apply(ctx: Context, config: Config | undefined): void {
   // file or environment, and a preset row may still pin them. Mounting must
   // succeed without them — `soc_login` is where an unconfigured machine is told
   // what to write, because that is when a user is present to act on it.
-  const endpoints = resolveEndpoints({ config: row as Record<string, unknown> })
-
+  // What the user typed into Settings, read afresh on every login so a change
+  // takes effect without a restart. Empty until the settings section attaches.
+  let settingsValues: Record<string, string> = {}
   const service = new SocAuthService({
-    endpoints,
+    // Resolved per login: the machine's file and environment, what the user
+    // typed in Settings, and finally anything this preset row pins.
+    endpoints: () => resolveEndpoints({
+      settings: settingsValues,
+      config: row as Record<string, unknown>,
+    }),
+    // What the user typed into Settings → Plugins → SOC Cloud. Read at login,
+    // so a correction takes effect on the next sign-in without a restart.
+    endpointOverrides: async () => {
+      const credentials = ctx.get('credentials')
+      const env = launchEnvironmentOf(ctx)
+      const out: Record<string, string> = {}
+      for (const field of SOC_ENDPOINT_FIELDS) {
+        const key = credentialRef(endpointRef(field))
+        const value = credentials !== undefined
+          ? (await credentials.resolve(key))?.value ?? env.get(key)?.value
+          : env.get(key)?.value
+        if (typeof value === 'string' && value.trim() !== '') out[field] = value.trim()
+      }
+      return out
+    },
     edrRedirectUri: row.edrRedirectUri,
     siemMgmtClientId: row.siemMgmtClientId,
     nsmRedirectUri: row.nsmRedirectUri,
@@ -142,9 +207,22 @@ export function apply(ctx: Context, config: Config | undefined): void {
   // the Plugins configuration tab lists and renders the card. `settings` is a
   // Host service; if the deployment has none, the card simply does not appear.
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {}, {
-      setSource: () => {},
-      onChange: () => {},
+    let current: () => Record<string, string> = () => ({})
+    settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
+      iamUrl: '',
+      clientId: '',
+      redirectUri: '',
+      soarBaseUrl: '',
+      tenant: '',
+      soarClientId: '',
+      edrBaseUrl: '',
+      siemBaseUrl: '',
+      nsmBaseUrl: '',
+    }, {
+      setSource: (source) => { current = source as () => Record<string, string> },
+      // A committed edit lands here; the next login reads it.
+      onChange: () => { settingsValues = { ...current() } },
     })
+    settingsValues = { ...current() }
   })
 }

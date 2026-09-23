@@ -54,7 +54,8 @@ export interface Config {
 export function apply(ctx: Context, config: Config = {}): void {
   const auth = ctx.socAuth
   // Configured once, on soc-auth.
-  const nsmBaseUrl = config.nsmBaseUrl ?? auth.nsmBaseUrl
+  // Read per request: Settings can change the deployment while the app runs.
+  const nsmBaseUrl = () => config.nsmBaseUrl ?? auth.nsmBaseUrl
 
   // One session serves every NSM endpoint, so a single client carries it;
   // `nsmAuthHeaders()` reads the current cookies and CSRF token per request.

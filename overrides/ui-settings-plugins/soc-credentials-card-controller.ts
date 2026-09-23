@@ -40,6 +40,37 @@ const USERNAME_FIELD = 'username'
 /** Form field the password control stages under. */
 const PASSWORD_FIELD = 'password'
 
+/**
+ * The deployment's endpoints, which this card also writes. They are
+ * configuration rather than secrets, but they share the credentials store: it
+ * is the one surface this card can write to, and it keeps every SOC setting in
+ * one place. `soc-auth` reads the same references when it signs in.
+ */
+export const ENDPOINT_FIELDS = [
+  'iamUrl',
+  'clientId',
+  'redirectUri',
+  'soarBaseUrl',
+  'tenant',
+  'soarClientId',
+  'edrBaseUrl',
+  'siemBaseUrl',
+  'nsmBaseUrl',
+] as const
+
+export type EndpointField = typeof ENDPOINT_FIELDS[number]
+
+/**
+ * The reference one endpoint field is stored under, e.g. `iamUrl` →
+ * `SOC_IAM_URL`. Spelled here as well as in `soc-auth`, because a client
+ * package must not depend on a Host package.
+ * @param field - the endpoint field name.
+ * @returns the credential reference.
+ */
+export function endpointRef(field: string): string {
+  return `SOC_${field.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`
+}
+
 /** What the credentials domain last reported for one reference. */
 interface CredentialState {
   /** Whether any layer supplies a value for it. */
@@ -62,6 +93,8 @@ export interface SocCredentialsCardState extends CardShell {
   passwordConfigured: boolean
   /** Whether the credentials domain accepts a write for the password; false disables the control. */
   passwordWritable: boolean
+  /** One staged control per endpoint, and whether the Host holds a value for it. */
+  endpoints: Record<EndpointField, CardFieldState & { configured: boolean, writable: boolean }>
 }
 
 /** The registration-side face the SOC Cloud credentials card's slot entry injects. */
@@ -85,6 +118,9 @@ export class SocCredentialsCardController {
   private readonly store: SnapshotStore<SocCredentialsCardState>
   private username: CredentialState = UNKNOWN_CREDENTIAL
   private password: CredentialState = UNKNOWN_CREDENTIAL
+  private endpointStates: Record<string, CredentialState> = Object.fromEntries(
+    ENDPOINT_FIELDS.map(field => [field, UNKNOWN_CREDENTIAL]),
+  )
 
   /**
    * @param scope - a bound settings scope used only to drive the shared form
@@ -102,6 +138,10 @@ export class SocCredentialsCardController {
       [
         { field: USERNAME_FIELD, write: text => this.writeRef(USERNAME_REF, text) },
         { field: PASSWORD_FIELD, write: text => this.writeRef(PASSWORD_REF, text) },
+        ...ENDPOINT_FIELDS.map(field => ({
+          field,
+          write: (text: string) => this.writeRef(endpointRef(field), text),
+        })),
       ],
     )
     this.store = this.form.bind(() => this.projection())
@@ -117,13 +157,19 @@ export class SocCredentialsCardController {
       available: true,
       // The credentials domain, not a settings document, is this card's store;
       // its writability is what the shell reports.
-      writable: this.username.writable || this.password.writable,
+      writable: this.username.writable || this.password.writable
+        || ENDPOINT_FIELDS.some(field => this.endpointStates[field]?.writable ?? true),
       username: this.form.field(USERNAME_FIELD),
       usernameConfigured: this.username.configured,
       usernameWritable: this.username.writable,
       password: this.form.field(PASSWORD_FIELD),
       passwordConfigured: this.password.configured,
       passwordWritable: this.password.writable,
+      endpoints: Object.fromEntries(ENDPOINT_FIELDS.map(field => [field, {
+        ...this.form.field(field),
+        configured: this.endpointStates[field]?.configured ?? false,
+        writable: this.endpointStates[field]?.writable ?? true,
+      }])) as SocCredentialsCardState['endpoints'],
     }
   }
 
@@ -132,7 +178,8 @@ export class SocCredentialsCardController {
    * A failed read leaves the last-known states in place.
    */
   private async readCredentials(): Promise<void> {
-    const response = await this.ctx.remote.credentials.describe([USERNAME_REF, PASSWORD_REF])
+    const refs = [USERNAME_REF, PASSWORD_REF, ...ENDPOINT_FIELDS.map(endpointRef)]
+    const response = await this.ctx.remote.credentials.describe(refs)
     if (!response.ok) return
     const read = (ref: string): CredentialState => {
       const view = response.value[ref]
@@ -142,6 +189,9 @@ export class SocCredentialsCardController {
     }
     this.username = read(USERNAME_REF)
     this.password = read(PASSWORD_REF)
+    this.endpointStates = Object.fromEntries(
+      ENDPOINT_FIELDS.map(field => [field, read(endpointRef(field))]),
+    )
     this.store.set(this.projection())
   }
 
@@ -154,7 +204,9 @@ export class SocCredentialsCardController {
    * @param ref - the reference the Host reports as changed.
    */
   refreshCredential(ref: string): void {
-    if (ref !== USERNAME_REF && ref !== PASSWORD_REF) return
+    const known = ref === USERNAME_REF || ref === PASSWORD_REF
+      || ENDPOINT_FIELDS.some(field => endpointRef(field) === ref)
+    if (!known) return
     void this.readCredentials()
   }
 
@@ -178,6 +230,9 @@ export class SocCredentialsCardController {
     // whether the credential now exists.
     await this.ctx.remote.credentials.set(ref, value)
     await this.readCredentials()
-    return (ref === USERNAME_REF ? this.username : this.password).configured
+    if (ref === USERNAME_REF) return this.username.configured
+    if (ref === PASSWORD_REF) return this.password.configured
+    const field = ENDPOINT_FIELDS.find(name => endpointRef(name) === ref)
+    return field === undefined ? false : this.endpointStates[field]?.configured ?? false
   }
 }

@@ -8,6 +8,7 @@
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { SecretField } from './fields.tsx'
+import { ENDPOINT_FIELDS } from './soc-credentials-card-controller.ts'
 import { PluginCard } from './PluginCard.tsx'
 import type { SocCredentialsCardFace } from './soc-credentials-card-controller.ts'
 import type {} from './slot-contract.ts'
@@ -57,6 +58,24 @@ export function SocCredentialsCard(props: SocCredentialsCardProps) {
         stateLabel={state.passwordConfigured ? t('socPasswordSet') : t('socPasswordUnset')}
         onEdit={(text) => { props.edit('password', text) }}
       />
+      {/* The deployment's own addresses. A build ships none, so whoever installs
+          it points the tools at their systems here. */}
+      {ENDPOINT_FIELDS.map((field) => {
+        const endpoint = state.endpoints[field]
+        return (
+          <SecretField
+            key={field}
+            id={`plugin-config-soc-${field}`}
+            label={t(`soc_${field}` as never)}
+            hint={t(`soc_${field}Hint` as never)}
+            disabled={!endpoint.writable}
+            text={endpoint.text}
+            configured={endpoint.configured}
+            stateLabel={endpoint.configured ? t('socValueSet') : t('socValueUnset')}
+            onEdit={(text) => { props.edit(field, text) }}
+          />
+        )
+      })}
     </PluginCard>
   )
 }

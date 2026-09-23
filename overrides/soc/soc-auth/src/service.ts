@@ -56,11 +56,19 @@ const SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'token
 
 export interface SocAuthServiceOptions {
   /**
-   * The endpoints this machine supplies, from its file or environment. Every
-   * field below overrides the matching entry, so a preset row still wins and a
-   * test can pass what it needs directly.
+   * The endpoints this deployment supplies, from the machine's file and
+   * environment and from what the user typed in Settings. A thunk, because
+   * Settings can change while the app runs: it is read again on every login.
+   * Every field below overrides the matching entry.
    */
-  endpoints?: ResolvedEndpoints | undefined
+  endpoints?: ResolvedEndpoints | (() => ResolvedEndpoints) | undefined
+  /**
+   * Endpoint values this user configured in the app, read at login. They are
+   * held next to the credentials because that store is the one surface the
+   * settings card can write to, and read here rather than at mount so an edit
+   * takes effect on the next sign-in.
+   */
+  endpointOverrides?: (() => Promise<Record<string, string>>) | undefined
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
   iamUrl?: string | undefined
   clientId?: string | undefined
@@ -110,45 +118,45 @@ export interface SocAuthServiceOptions {
 }
 
 export class SocAuthService {
-  private readonly iamUrl: string
-  private readonly clientId: string
-  private readonly redirectUri: string
+  iamUrl: string = ''
+  private clientId: string = ''
+  private redirectUri: string = ''
   /**
    * Base URL of the SOAR API, without a trailing slash. Public because the
    * SOAR tool plugin reads it from here: the endpoint is configured once, on
    * this plugin, so the two cannot drift apart.
    */
-  readonly soarBaseUrl: string
+  soarBaseUrl: string = ''
   /** SOAR tenant, defaulted at construction. Public for the same reason. */
-  readonly tenant: string
-  private readonly soarClientId: string
-  private readonly soarRedirectUri: string
-  private readonly soarAuthenUrl: string
+  tenant: string = ''
+  private soarClientId: string = ''
+  private soarRedirectUri: string = ''
+  private soarAuthenUrl: string = ''
   /**
    * Base URL of the EDR API, without a trailing slash. Public because the EDR
    * tool plugin reads it from here, so endpoint and tools cannot drift apart.
    */
-  readonly edrBaseUrl: string
-  private readonly edrClientId: string
-  private readonly edrRedirectUri: string
+  edrBaseUrl: string = ''
+  private edrClientId: string = ''
+  private edrRedirectUri: string = ''
   /**
    * Base URL of the SIEM API, without a trailing slash. Public because the SIEM
    * tool plugin reads it from here, so endpoint and tools cannot drift apart.
    */
-  readonly siemBaseUrl: string
-  private readonly siemClientId: string
+  siemBaseUrl: string = ''
+  private siemClientId: string = ''
   /**
    * SIEM management client id. Public because the SIEM probe tool sends it as the
    * `client_id` of its permission check, so it is configured once, here.
    */
-  readonly siemMgmtClientId: string
+  siemMgmtClientId: string = ''
   /**
    * Base URL of the NSM API, without a trailing slash. Public because the NSM
    * tool plugin reads it from here, so endpoint and tools cannot drift apart.
    */
-  readonly nsmBaseUrl: string
-  private readonly nsmClientId: string
-  private readonly nsmRedirectUri: string
+  nsmBaseUrl: string = ''
+  private nsmClientId: string = ''
+  private nsmRedirectUri: string = ''
   private readonly credentials: () => Promise<{ username: string, password: string }>
   private readonly fetchImpl?: FetchLike | undefined
   private readonly now: () => number
@@ -197,26 +205,43 @@ export class SocAuthService {
   /** De-duplicates concurrent acquisitions of one per-API token. */
   private readonly siemInflight = new Map<string, Promise<string>>()
 
-  /** What this machine supplied, named in the error an unconfigured one gets. */
-  private readonly endpoints: ResolvedEndpoints
+  /** The options this service was built with, re-read when endpoints change. */
+  private readonly options: SocAuthServiceOptions
 
-  constructor(opts: SocAuthServiceOptions) {
+  /** Endpoint values read from the app's own configuration at the last login. */
+  private configured: Record<string, string> = {}
+
+  /**
+   * Resolve the deployment's endpoints and derive every URL from them. Called
+   * at construction and again on each login, because the user can edit them in
+   * Settings while the app runs.
+   */
+  private applyEndpoints(): void {
+    const opts = this.options
+    const resolved = typeof opts.endpoints === 'function' ? opts.endpoints() : opts.endpoints
+    // What the user typed in the app wins over the machine's file and
+    // environment; a preset row that pins a value still wins over both.
+    const source = resolved === undefined ? undefined : {
+      ...resolved,
+      values: { ...resolved.values, ...this.configured },
+      missing: resolved.missing.filter(key => this.configured[key] === undefined),
+    }
     // The machine's own endpoints first; anything passed here overrides them,
     // which is how a preset row pins one and how a test supplies just enough.
-    const supplied = opts.endpoints ?? { values: {}, missing: [], filePath: '' }
+    const supplied = source ?? { values: {}, missing: [], filePath: '' }
     const trimmed = (key: string, explicit: string | undefined): string =>
       (explicit ?? supplied.values[key] ?? '').replace(/\/+$/, '')
     this.iamUrl = trimmed('iamUrl', opts.iamUrl)
     this.clientId = opts.clientId ?? supplied.values.clientId ?? ''
     this.redirectUri = opts.redirectUri ?? supplied.values.redirectUri ?? ''
     this.soarBaseUrl = trimmed('soarBaseUrl', opts.soarBaseUrl)
-    this.endpoints = {
-      ...supplied,
-      missing: supplied.missing.filter(key => {
-        const overridden = { iamUrl: this.iamUrl, clientId: this.clientId, redirectUri: this.redirectUri, soarBaseUrl: this.soarBaseUrl }
-        return (overridden as Record<string, string>)[key] === ''
-      }),
+    const overridden: Record<string, string> = {
+      iamUrl: this.iamUrl,
+      clientId: this.clientId,
+      redirectUri: this.redirectUri,
+      soarBaseUrl: this.soarBaseUrl,
     }
+    this.endpoints = { ...supplied, missing: supplied.missing.filter(key => overridden[key] === '') }
     this.tenant = opts.tenant ?? supplied.values.tenant ?? 'MASTER'
     this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? this.clientId
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
@@ -230,6 +255,14 @@ export class SocAuthService {
     this.nsmBaseUrl = trimmed('nsmBaseUrl', opts.nsmBaseUrl)
     this.nsmClientId = opts.nsmClientId ?? supplied.values.nsmClientId ?? 'NSM'
     this.nsmRedirectUri = opts.nsmRedirectUri ?? `${this.nsmBaseUrl}/callback`
+  }
+
+  /** What this machine supplied, named in the error an unconfigured one gets. */
+  private endpoints: ResolvedEndpoints = { values: {}, missing: [], filePath: '' }
+
+  constructor(opts: SocAuthServiceOptions) {
+    this.options = opts
+    this.applyEndpoints()
     this.credentials = opts.credentials
     this.fetchImpl = opts.fetchImpl
     this.now = opts.now ?? (() => Date.now())
@@ -245,6 +278,11 @@ export class SocAuthService {
    * user just read from their authenticator. Throws on any failure.
    */
   async login(otp: string): Promise<void> {
+    // The deployment may have been re-configured since the last login.
+    this.configured = this.options.endpointOverrides === undefined
+      ? {}
+      : await this.options.endpointOverrides()
+    this.applyEndpoints()
     if (this.endpoints.missing.length > 0) {
       throw new SocAuthError(`SOC auth: ${missingEndpointsMessage(this.endpoints)}`)
     }

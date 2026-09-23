@@ -54,7 +54,8 @@ export interface Config {
 export function apply(ctx: Context, config: Config = {}): void {
   const auth = ctx.socAuth
   // Configured once, on soc-auth.
-  const siemBaseUrl = config.siemBaseUrl ?? auth.siemBaseUrl
+  // Read per request: Settings can change the deployment while the app runs.
+  const siemBaseUrl = () => config.siemBaseUrl ?? auth.siemBaseUrl
 
   // SIEM issues one token per API group (audience) and scope, so each request
   // is routed through a client carrying that path's token.

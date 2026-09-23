@@ -6,12 +6,14 @@
  * and every deployment would need its own build. Instead each machine supplies
  * them, and one build serves every deployment.
  *
- * Three sources, later ones winning:
+ * Four sources, later ones winning:
  *  1. `soc-endpoints.json` in the dsh home (`~/.dsh` unless `DSH_HOME` says
  *     otherwise) — the file an administrator hands out.
  *  2. Environment variables (`SOC_IAM_URL`, `SOC_SOAR_BASE_URL`, …) — for a
  *     machine that is configured by its launch environment.
- *  3. The preset row's own `config:` block — for a deployment that does pin
+ *  3. The SOC Cloud card in Settings — what this user typed, which is how
+ *     someone who installed a public build configures their own deployment.
+ *  4. The preset row's own `config:` block — for a deployment that does pin
  *     them, and for tests.
  *
  * Kept free of `@deepseek-ai/*` imports so it can be unit tested on its own.
@@ -103,6 +105,7 @@ function stringsOf(source: Record<string, unknown>): Record<string, string> {
  */
 export function resolveEndpoints(opts: {
   config?: Record<string, unknown> | undefined
+  settings?: Record<string, unknown> | undefined
   env?: NodeJS.ProcessEnv | undefined
   home?: string | undefined
 } = {}): ResolvedEndpoints {
@@ -116,6 +119,7 @@ export function resolveEndpoints(opts: {
   const values = {
     ...readFile(filePath),
     ...fromEnv,
+    ...stringsOf(opts.settings ?? {}),
     ...stringsOf(opts.config ?? {}),
   }
   const missing = ENDPOINT_FIELDS
@@ -135,5 +139,7 @@ export function missingEndpointsMessage(resolved: ResolvedEndpoints): string {
     .filter(field => resolved.missing.includes(field.key))
     .map(field => field.env)
   return `SOC endpoints are not configured: ${resolved.missing.join(', ')} are unset. `
-    + `Write them into ${resolved.filePath} (a JSON object), or set ${envNames.join(', ')} in the environment.`
+    + 'Fill them in under Settings → Plugins → SOC Cloud, '
+    + `or write them into ${resolved.filePath} (a JSON object), `
+    + `or set ${envNames.join(', ')} in the environment.`
 }

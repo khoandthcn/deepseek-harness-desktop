@@ -27,14 +27,21 @@ export interface SocHttpOptions {
  * hierarchy. Network-level failures are wrapped as SocUpstreamError.
  */
 export class SocHttp {
-  private readonly baseUrl: string
+  /**
+   * Resolved per request, not at construction: the deployment's endpoints can
+   * be edited in Settings while the app runs, and a client that captured the
+   * old value would keep talking to it.
+   */
+  private readonly resolveBaseUrl: () => string
   private readonly fetchImpl: typeof fetch
   private readonly authHeaders?: (() => Record<string, string>) | undefined
   /** Mutable: the WAF may hand it to us mid-flight, see `d1n.ts`. */
   private d1nCookie?: string | undefined
 
-  constructor(baseUrl: string, opts: SocHttpOptions = {}) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '')
+  constructor(baseUrl: string | (() => string), opts: SocHttpOptions = {}) {
+    this.resolveBaseUrl = typeof baseUrl === 'function'
+      ? () => baseUrl().replace(/\/+$/, '')
+      : () => baseUrl.replace(/\/+$/, '')
     this.fetchImpl = opts.fetchImpl ?? fetch
     this.authHeaders = opts.authHeaders
     this.d1nCookie = opts.d1nCookie
@@ -70,7 +77,7 @@ export class SocHttp {
   }
 
   private async request<T>(method: string, path: string, body?: unknown, afterBootstrap = false): Promise<T> {
-    const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`
+    const url = `${this.resolveBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`
     const hasBody = body !== undefined
     const init: RequestInit & { headers: Record<string, string>; body?: string } = {
       method,
