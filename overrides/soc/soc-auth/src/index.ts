@@ -25,11 +25,11 @@ export * from './service.ts'
 export const name = 'soc-auth'
 
 /**
- * The settings namespace the SOC credentials card is keyed to. The card carries
- * no editable settings — the username and password go through the credentials
- * domain, not this section — but the Plugins configuration tab only dispatches a
+ * The settings namespace the SOC Cloud card is keyed to. The card's values do
+ * not live here — the username, the password and the endpoints all go through
+ * the credentials domain — but the Plugins configuration tab only dispatches a
  * card whose namespace the Host serves, so this section must exist for the card
- * to appear. Its schema is therefore empty.
+ * to appear at all.
  */
 export const SOC_CREDENTIALS_NS = 'soc-credentials'
 /**
@@ -126,6 +126,16 @@ export interface Config {
    */
   usernameRef?: string | undefined
   passwordRef?: string | undefined
+  /**
+   * Install the settings section and nothing else: no service, no session.
+   *
+   * The SOC Cloud card in Settings is dispatched by namespace, and the Host
+   * lists a namespace only while something serves it. This plugin normally runs
+   * inside the soc-cloud preset, i.e. only once a session mounts it — which
+   * leaves a fresh install with nowhere to type the endpoints the first login
+   * needs. Mounted this way at Host level, the card is there from the start.
+   */
+  settingsOnly?: boolean | undefined
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -161,22 +171,19 @@ export async function resolveCredential(ctx: Context, ref: string): Promise<stri
 
 export function apply(ctx: Context, config: Config | undefined): void {
   const row = config ?? {}
+  // The card's namespace, served whether or not this row runs a session.
+  installSocSection(ctx)
+  if (row.settingsOnly === true) return
   const usernameRef = row.usernameRef ?? 'SOC_USERNAME'
   const passwordRef = row.passwordRef ?? 'SOC_PASSWORD'
   // The endpoints are not built in: this machine supplies them, from its own
   // file or environment, and a preset row may still pin them. Mounting must
   // succeed without them — `soc_login` is where an unconfigured machine is told
   // what to write, because that is when a user is present to act on it.
-  // What the user typed into Settings, read afresh on every login so a change
-  // takes effect without a restart. Empty until the settings section attaches.
-  let settingsValues: Record<string, string> = {}
   const service = new SocAuthService({
     // Resolved per login: the machine's file and environment, what the user
     // typed in Settings, and finally anything this preset row pins.
-    endpoints: () => resolveEndpoints({
-      settings: settingsValues,
-      config: row as Record<string, unknown>,
-    }),
+    endpoints: () => resolveEndpoints({ config: row as Record<string, unknown> }),
     // What the user typed into Settings → Plugins → SOC Cloud. Read at login,
     // so a correction takes effect on the next sign-in without a restart.
     endpointOverrides: async () => {
@@ -202,12 +209,15 @@ export function apply(ctx: Context, config: Config | undefined): void {
   })
 
   ctx.provide('socAuth', service)
+}
 
-  // Publish the (empty) settings section the credentials card is keyed to, so
-  // the Plugins configuration tab lists and renders the card. `settings` is a
-  // Host service; if the deployment has none, the card simply does not appear.
+/**
+ * Publish the settings section the SOC Cloud card is keyed to. `settings` is a
+ * Host service; where the deployment has none, the card simply does not appear.
+ * @param ctx - the mounting context.
+ */
+function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    let current: () => Record<string, string> = () => ({})
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       iamUrl: '',
       clientId: '',
@@ -219,10 +229,8 @@ export function apply(ctx: Context, config: Config | undefined): void {
       siemBaseUrl: '',
       nsmBaseUrl: '',
     }, {
-      setSource: (source) => { current = source as () => Record<string, string> },
-      // A committed edit lands here; the next login reads it.
-      onChange: () => { settingsValues = { ...current() } },
+      setSource: () => {},
+      onChange: () => {},
     })
-    settingsValues = { ...current() }
   })
 }

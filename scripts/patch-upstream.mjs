@@ -233,6 +233,22 @@ if (overlayText.includes(`default: ${PRESET_ID}`)) {
   console.log(`patched: ${overlay}`)
 }
 
+// The SOC Cloud card in Settings is dispatched by settings namespace, and the
+// Host lists a namespace only while something serves it. `soc-auth` normally
+// runs inside the soc-cloud preset — i.e. only once a session mounts it — so a
+// fresh install had nowhere to type the endpoints the first login needs. This
+// Host row serves the namespace and nothing else: no service, no session.
+const socSettingsOverlay = readFileSync(join(root, overlay), 'utf8')
+if (socSettingsOverlay.includes('settingsOnly: true')) {
+  console.log(`already patched: ${overlay} (SOC settings card)`)
+} else {
+  writeFileSync(
+    join(root, overlay),
+    `${socSettingsOverlay.trimEnd()}\n\n# deepseek-harness-desktop: the SOC Cloud card in Settings, before any session.\n- id: soc-settings\n  name: '@deepseek-ai/dsh-soc-auth'\n  config:\n    settingsOnly: true\n`,
+  )
+  console.log(`patched: ${overlay} (SOC settings card)`)
+}
+
 // ── 4. per-build family version ──────────────────────────────────────────────
 // Desktop reinstalls its profile only when the seed's version differs from the
 // installed one (`applyRelease` compares desktop-release.json, the installed
@@ -417,6 +433,14 @@ for (const file of ['soc-credentials-card-controller.ts', 'SocCredentialsCard.ts
   )
   console.log(`copied: ${UI_SETTINGS_PLUGINS_CLIENT}/${file}`)
 }
+// The card's own render test travels with it: a card that throws while
+// rendering leaves the Plugins tab showing every other card and no sign of
+// this one, which is indistinguishable from a card that was never registered.
+copyFileSync(
+  join(here, 'overrides', 'ui-settings-plugins', 'soc-card.client.spec.tsx'),
+  join(root, 'packages/client/ui-settings-plugins/tests/soc-card.client.spec.tsx'),
+)
+console.log('copied: packages/client/ui-settings-plugins/tests/soc-card.client.spec.tsx')
 
 const PLUGINS_INDEX = `${UI_SETTINGS_PLUGINS_CLIENT}/index.ts`
 patch(
