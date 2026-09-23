@@ -8,7 +8,7 @@
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { SecretField } from './fields.tsx'
-import { ENDPOINT_FIELDS } from './soc-credentials-card-controller.ts'
+import { ENDPOINT_FIELDS, VTI_FIELDS } from './soc-credentials-card-controller.ts'
 import { PluginCard } from './PluginCard.tsx'
 import type { SocCredentialsCardFace } from './soc-credentials-card-controller.ts'
 import type {} from './slot-contract.ts'
@@ -72,6 +72,23 @@ export function SocCredentialsCard(props: SocCredentialsCardProps) {
             text={endpoint.text}
             configured={endpoint.configured}
             stateLabel={endpoint.configured ? t('socValueSet') : t('socValueUnset')}
+            onEdit={(text) => { props.edit(field, text) }}
+          />
+        )
+      })}
+      {/* The Threat Intelligence platform is a separate account. */}
+      {VTI_FIELDS.map((field) => {
+        const account = state.vti[field]
+        return (
+          <SecretField
+            key={field}
+            id={`plugin-config-soc-${field}`}
+            label={t(`soc_${field}` as never)}
+            hint={t(`soc_${field}Hint` as never)}
+            disabled={!account.writable}
+            text={account.text}
+            configured={account.configured}
+            stateLabel={account.configured ? t('socValueSet') : t('socValueUnset')}
             onEdit={(text) => { props.edit(field, text) }}
           />
         )

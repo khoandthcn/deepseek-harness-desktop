@@ -41,6 +41,19 @@ const USERNAME_FIELD = 'username'
 const PASSWORD_FIELD = 'password'
 
 /**
+ * The Threat Intelligence account, which is a different platform with its own
+ * sign-in: an account email and an API key, both written like the SOC ones.
+ */
+export const VTI_FIELDS = ['vtiUsername', 'vtiApiKey'] as const
+
+export type VtiField = typeof VTI_FIELDS[number]
+
+/** The reference one Threat Intelligence field is stored under. */
+export function vtiRef(field: VtiField): string {
+  return field === 'vtiUsername' ? 'VTI_USERNAME' : 'VTI_API_KEY'
+}
+
+/**
  * The deployment's endpoints, which this card also writes. They are
  * configuration rather than secrets, but they share the credentials store: it
  * is the one surface this card can write to, and it keeps every SOC setting in
@@ -95,6 +108,8 @@ export interface SocCredentialsCardState extends CardShell {
   passwordWritable: boolean
   /** One staged control per endpoint, and whether the Host holds a value for it. */
   endpoints: Record<EndpointField, CardFieldState & { configured: boolean, writable: boolean }>
+  /** The Threat Intelligence account's two controls. */
+  vti: Record<VtiField, CardFieldState & { configured: boolean, writable: boolean }>
 }
 
 /** The registration-side face the SOC Cloud credentials card's slot entry injects. */
@@ -122,6 +137,10 @@ export class SocCredentialsCardController {
     ENDPOINT_FIELDS.map(field => [field, UNKNOWN_CREDENTIAL]),
   )
 
+  private vtiStates: Record<string, CredentialState> = Object.fromEntries(
+    VTI_FIELDS.map(field => [field, UNKNOWN_CREDENTIAL]),
+  )
+
   /**
    * @param scope - a bound settings scope used only to drive the shared form
    * model; no Host plugin serves its namespace.
@@ -141,6 +160,10 @@ export class SocCredentialsCardController {
         ...ENDPOINT_FIELDS.map(field => ({
           field,
           write: (text: string) => this.writeRef(endpointRef(field), text),
+        })),
+        ...VTI_FIELDS.map(field => ({
+          field,
+          write: (text: string) => this.writeRef(vtiRef(field), text),
         })),
       ],
     )
@@ -170,6 +193,11 @@ export class SocCredentialsCardController {
         configured: this.endpointStates[field]?.configured ?? false,
         writable: this.endpointStates[field]?.writable ?? true,
       }])) as SocCredentialsCardState['endpoints'],
+      vti: Object.fromEntries(VTI_FIELDS.map(field => [field, {
+        ...this.form.field(field),
+        configured: this.vtiStates[field]?.configured ?? false,
+        writable: this.vtiStates[field]?.writable ?? true,
+      }])) as SocCredentialsCardState['vti'],
     }
   }
 
@@ -178,7 +206,12 @@ export class SocCredentialsCardController {
    * A failed read leaves the last-known states in place.
    */
   private async readCredentials(): Promise<void> {
-    const refs = [USERNAME_REF, PASSWORD_REF, ...ENDPOINT_FIELDS.map(endpointRef)]
+    const refs = [
+      USERNAME_REF,
+      PASSWORD_REF,
+      ...ENDPOINT_FIELDS.map(endpointRef),
+      ...VTI_FIELDS.map(vtiRef),
+    ]
     const response = await this.ctx.remote.credentials.describe(refs)
     if (!response.ok) return
     const read = (ref: string): CredentialState => {
@@ -192,6 +225,7 @@ export class SocCredentialsCardController {
     this.endpointStates = Object.fromEntries(
       ENDPOINT_FIELDS.map(field => [field, read(endpointRef(field))]),
     )
+    this.vtiStates = Object.fromEntries(VTI_FIELDS.map(field => [field, read(vtiRef(field))]))
     this.store.set(this.projection())
   }
 
@@ -206,6 +240,7 @@ export class SocCredentialsCardController {
   refreshCredential(ref: string): void {
     const known = ref === USERNAME_REF || ref === PASSWORD_REF
       || ENDPOINT_FIELDS.some(field => endpointRef(field) === ref)
+      || VTI_FIELDS.some(field => vtiRef(field) === ref)
     if (!known) return
     void this.readCredentials()
   }
@@ -233,6 +268,8 @@ export class SocCredentialsCardController {
     if (ref === USERNAME_REF) return this.username.configured
     if (ref === PASSWORD_REF) return this.password.configured
     const field = ENDPOINT_FIELDS.find(name => endpointRef(name) === ref)
-    return field === undefined ? false : this.endpointStates[field]?.configured ?? false
+    if (field !== undefined) return this.endpointStates[field]?.configured ?? false
+    const vtiField = VTI_FIELDS.find(name => vtiRef(name) === ref)
+    return vtiField === undefined ? false : this.vtiStates[vtiField]?.configured ?? false
   }
 }

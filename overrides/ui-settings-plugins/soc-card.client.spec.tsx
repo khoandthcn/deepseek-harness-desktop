@@ -15,7 +15,7 @@ import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { SocCredentialsCard } from '../src/client/SocCredentialsCard.tsx'
 import type { SocCredentialsCardProps } from '../src/client/SocCredentialsCard.tsx'
-import { ENDPOINT_FIELDS } from '../src/client/soc-credentials-card-controller.ts'
+import { ENDPOINT_FIELDS, VTI_FIELDS } from '../src/client/soc-credentials-card-controller.ts'
 import type { SocCredentialsCardState } from '../src/client/soc-credentials-card-controller.ts'
 import { en } from '../src/client/locales.ts'
 
@@ -42,6 +42,11 @@ function state(overrides: Partial<SocCredentialsCardState> = {}): SocCredentials
       configured: false,
       writable: true,
     }])) as unknown as SocCredentialsCardState['endpoints'],
+    vti: Object.fromEntries(VTI_FIELDS.map(name => [name, {
+      ...field,
+      configured: false,
+      writable: true,
+    }])) as unknown as SocCredentialsCardState['vti'],
     ...overrides,
   } as SocCredentialsCardState
 }
@@ -71,9 +76,23 @@ describe('SocCredentialsCard', () => {
     expand()
     expect(screen.getByLabelText(en.socUsername)).toBeTruthy()
     expect(screen.getByLabelText(en.socPassword)).toBeTruthy()
-    for (const name of ENDPOINT_FIELDS) {
+    for (const name of [...ENDPOINT_FIELDS, ...VTI_FIELDS]) {
       expect(screen.getByLabelText(en[`soc_${name}` as keyof typeof en]), name).toBeTruthy()
     }
+  })
+
+  it('carries the Threat Intelligence account, which is a separate sign-in', () => {
+    const actions = renderCard()
+    expand()
+    fireEvent.change(screen.getByLabelText(en.soc_vtiApiKey), { target: { value: 'KEY' } })
+    expect(actions.edit).toHaveBeenCalledWith('vtiApiKey', 'KEY')
+  })
+
+  it('carries the Threat Intelligence account, which is a separate sign-in', () => {
+    const actions = renderCard()
+    expand()
+    fireEvent.change(screen.getByLabelText(en.soc_vtiApiKey), { target: { value: 'KEY' } })
+    expect(actions.edit).toHaveBeenCalledWith('vtiApiKey', 'KEY')
   })
 
   it('stages an endpoint edit under its own field', () => {
@@ -93,6 +112,7 @@ describe('SocCredentialsCard', () => {
     })
     expand()
     expect(screen.getAllByText(en.socValueSet)).toHaveLength(1)
-    expect(screen.getAllByText(en.socValueUnset)).toHaveLength(ENDPOINT_FIELDS.length - 1)
+    expect(screen.getAllByText(en.socValueUnset))
+      .toHaveLength(ENDPOINT_FIELDS.length + VTI_FIELDS.length - 1)
   })
 })

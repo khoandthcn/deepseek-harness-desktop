@@ -340,8 +340,26 @@ const SOC_PACKAGE_REFERENCES = {
     '../soc-client',
     '../soc-auth',
   ],
+  // Threat Intelligence is a separate platform with its own account, so this
+  // one needs the HTTP client and the credentials seam, but not `soc-auth`.
+  'tool-soc-vti': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../core/tools',
+    '../../credentials/credentials',
+    '../../util/launch-environment',
+    '../soc-client',
+  ],
 }
-for (const name of ['soc-client', 'soc-auth', 'tool-soc-soar', 'tool-soc-edr', 'tool-soc-siem', 'tool-soc-nsm']) {
+for (const name of [
+  'soc-client',
+  'soc-auth',
+  'tool-soc-soar',
+  'tool-soc-edr',
+  'tool-soc-siem',
+  'tool-soc-nsm',
+  'tool-soc-vti',
+]) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
   cpSync(from, to, {
@@ -381,6 +399,7 @@ for (const name of [
   'dsh-tool-soc-edr',
   'dsh-tool-soc-siem',
   'dsh-tool-soc-nsm',
+  'dsh-tool-soc-vti',
 ]) {
   cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
 }
@@ -402,7 +421,8 @@ patch(
   + '      "@deepseek-ai/dsh-tool-soc-soar": ["./packages/soc/tool-soc-soar/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-edr": ["./packages/soc/tool-soc-edr/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n'
-  + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n',
+  + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n'
+  + '      "@deepseek-ai/dsh-tool-soc-vti": ["./packages/soc/tool-soc-vti/src"],\n',
 )
 patch(
   'tsconfig.host.json',
@@ -413,7 +433,8 @@ patch(
   + '    { "path": "./packages/soc/tool-soc-soar" },\n'
   + '    { "path": "./packages/soc/tool-soc-edr" },\n'
   + '    { "path": "./packages/soc/tool-soc-siem" },\n'
-  + '    { "path": "./packages/soc/tool-soc-nsm" },\n',
+  + '    { "path": "./packages/soc/tool-soc-nsm" },\n'
+  + '    { "path": "./packages/soc/tool-soc-vti" },\n',
 )
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
@@ -505,7 +526,9 @@ patch(
   + "  | 'soc_soarClientId' | 'soc_soarClientIdHint'\n"
   + "  | 'soc_edrBaseUrl' | 'soc_edrBaseUrlHint'\n"
   + "  | 'soc_siemBaseUrl' | 'soc_siemBaseUrlHint'\n"
-  + "  | 'soc_nsmBaseUrl' | 'soc_nsmBaseUrlHint'\n",
+  + "  | 'soc_nsmBaseUrl' | 'soc_nsmBaseUrlHint'\n"
+  + "  | 'soc_vtiUsername' | 'soc_vtiUsernameHint'\n"
+  + "  | 'soc_vtiApiKey' | 'soc_vtiApiKeyHint'\n",
 )
 patch(
   PLUGINS_LOCALES,
@@ -541,6 +564,10 @@ patch(
   + "  soc_siemBaseUrlHint: 'Your deployment\\'s value, e.g. https://siem.example. Leave blank to keep the current one.',\n"
   + "  soc_nsmBaseUrl: 'NSM API URL',\n"
   + "  soc_nsmBaseUrlHint: 'Your deployment\\'s value, e.g. https://nsm.example. Leave blank to keep the current one.',\n"
+  + "  soc_vtiUsername: 'Threat Intelligence account',\n"
+  + "  soc_vtiUsernameHint: 'The email you sign in to the Threat Intelligence platform with.',\n"
+  + "  soc_vtiApiKey: 'Threat Intelligence API key',\n"
+  + "  soc_vtiApiKeyHint: 'From the platform\\'s account page. Leave blank to keep the current key.',\n"
   + "}",
 )
 patch(
@@ -577,6 +604,10 @@ patch(
   + "  soc_siemBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
   + "  soc_nsmBaseUrl: 'NSM API 地址',\n"
   + "  soc_nsmBaseUrlHint: '本部署的取值。留空表示保持当前值。',\n"
+  + "  soc_vtiUsername: '威胁情报账号',\n"
+  + "  soc_vtiUsernameHint: '登录威胁情报平台使用的邮箱。',\n"
+  + "  soc_vtiApiKey: '威胁情报 API 密钥',\n"
+  + "  soc_vtiApiKeyHint: '在平台账号页获取。留空表示保持当前密钥。',\n"
   + "}",
 )
 
