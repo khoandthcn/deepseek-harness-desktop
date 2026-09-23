@@ -65,7 +65,7 @@ function renderCard(overrides: Partial<SocCredentialsCardState> = {}) {
 
 /** The card ships collapsed, as every card in this tab does. */
 function expand() {
-  fireEvent.click(screen.getByRole('button', { name: /SOC Cloud credentials/ }))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(en.socTitle) }))
 }
 
 afterEach(() => { cleanup() })
@@ -88,25 +88,18 @@ describe('SocCredentialsCard', () => {
     expect(actions.edit).toHaveBeenCalledWith('vtiApiKey', 'KEY')
   })
 
-  it('carries the Threat Intelligence account, which is a separate sign-in', () => {
+  it('stages the platform domain, which configures every system', () => {
     const actions = renderCard()
     expand()
-    fireEvent.change(screen.getByLabelText(en.soc_vtiApiKey), { target: { value: 'KEY' } })
-    expect(actions.edit).toHaveBeenCalledWith('vtiApiKey', 'KEY')
+    fireEvent.change(screen.getByLabelText(en.soc_socDomain), { target: { value: 'soc.example.com' } })
+    expect(actions.edit).toHaveBeenCalledWith('socDomain', 'soc.example.com')
   })
 
-  it('stages an endpoint edit under its own field', () => {
-    const actions = renderCard()
-    expand()
-    fireEvent.change(screen.getByLabelText(en.soc_iamUrl), { target: { value: 'https://iam.example' } })
-    expect(actions.edit).toHaveBeenCalledWith('iamUrl', 'https://iam.example')
-  })
-
-  it('reports which endpoints the Host already holds', () => {
+  it('reports which settings the Host already holds', () => {
     renderCard({
       endpoints: Object.fromEntries(ENDPOINT_FIELDS.map(name => [name, {
         ...field,
-        configured: name === 'iamUrl',
+        configured: name === 'socDomain',
         writable: true,
       }])) as unknown as SocCredentialsCardState['endpoints'],
     })

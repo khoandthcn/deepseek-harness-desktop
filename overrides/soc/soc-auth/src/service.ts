@@ -17,7 +17,7 @@
  */
 
 import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
-import { missingEndpointsMessage, type ResolvedEndpoints } from './endpoints.ts'
+import { deriveFromDomain, missingEndpointsMessage, type ResolvedEndpoints } from './endpoints.ts'
 import { establishAppSession, establishSiemSession, runWso2Login, setCookiesOf, SiemRefusalError, SocAuthError, type FetchLike } from './wso2.ts'
 
 /** Refresh a little before the real expiry, so an in-flight call cannot race it. */
@@ -69,6 +69,8 @@ export interface SocAuthServiceOptions {
    * takes effect on the next sign-in.
    */
   endpointOverrides?: (() => Promise<Record<string, string>>) | undefined
+  /** The platform's root domain; every system's URL is derived from it. */
+  socDomain?: string | undefined
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
   iamUrl?: string | undefined
   clientId?: string | undefined
@@ -221,11 +223,20 @@ export class SocAuthService {
     const resolved = typeof opts.endpoints === 'function' ? opts.endpoints() : opts.endpoints
     // What the user typed in the app wins over the machine's file and
     // environment; a preset row that pins a value still wins over both.
-    const source = resolved === undefined ? undefined : {
-      ...resolved,
-      values: { ...resolved.values, ...this.configured },
-      missing: resolved.missing.filter(key => this.configured[key] === undefined),
-    }
+    const configured = opts.socDomain === undefined
+      ? this.configured
+      : { ...this.configured, socDomain: opts.socDomain }
+    const source = resolved === undefined
+      ? (Object.keys(configured).length === 0
+          ? undefined
+          : { values: deriveFromDomain(configured), missing: [], filePath: '' })
+      : {
+          ...resolved,
+          // Derive again: a domain typed in the app configures every system
+          // exactly as one in the file does.
+          values: deriveFromDomain({ ...resolved.values, ...configured }),
+          missing: resolved.missing.filter(key => configured[key] === undefined),
+        }
     // The machine's own endpoints first; anything passed here overrides them,
     // which is how a preset row pins one and how a test supplies just enough.
     const supplied = source ?? { values: {}, missing: [], filePath: '' }

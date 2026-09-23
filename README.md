@@ -138,31 +138,37 @@ thay vì tạo ra bản build hỏng.
 
 ## Cấu hình hệ thống SOC trên từng máy
 
-Bản cài không chứa địa chỉ hệ thống nào. Mỗi máy tự khai, bằng một trong hai cách.
+Bản cài không chứa địa chỉ hệ thống nào. Mỗi máy tự khai, và chỉ cần **một tên miền gốc**:
+các hệ IAM, SOAR, EDR, SIEM, NSM đều nằm ở subdomain của nó nên được suy ra.
 
-Cách một, tạo file `~/.dsh/soc-endpoints.json`:
+Cách dễ nhất là mở Settings, mục Plugins, thẻ SOC Cloud, rồi điền:
+
+| Ô | Ý nghĩa |
+|---|---|
+| SOC platform domain | Tên miền gốc, ví dụ `soc.example.com` |
+| Portal client id | Mã OAuth client của cổng, hỏi quản trị SOC |
+| Tenant | Tenant cho tool SOAR, để trống là `MASTER` |
+| SOC username, SOC password | Tài khoản đăng nhập, OTP vẫn hỏi lúc chạy |
+| Threat Intelligence domain | Để trống là `ti.example`, API là `api.<tên miền>` |
+| Threat Intelligence account, API key | Email và khoá của nền tảng TI |
+
+Hai cách khác, dùng khi phát cho nhiều máy. Tạo file `~/.dsh/soc-endpoints.json`:
 
 ```json
 {
-  "iamUrl": "https://iam.example",
+  "socDomain": "soc.example.com",
   "clientId": "CLIENT_ID",
-  "redirectUri": "https://soc.example",
-  "soarBaseUrl": "https://soar.example",
-  "tenant": "MASTER",
-  "edrBaseUrl": "https://edr.example",
-  "siemBaseUrl": "https://siem.example",
-  "nsmBaseUrl": "https://nsm.example"
+  "tenant": "MASTER"
 }
 ```
 
-Bốn khoá đầu là bắt buộc. Ba khoá base URL còn lại chỉ cần nếu dùng tool của hệ đó.
+Hoặc đặt biến môi trường `SOC_DOMAIN`, `SOC_CLIENT_ID`, `SOC_TENANT`. Thứ tự ưu tiên là
+file, rồi biến môi trường, rồi ô trong Settings, cuối cùng là `config:` trong preset.
 
-Cách hai, đặt biến môi trường `SOC_IAM_URL`, `SOC_CLIENT_ID`, `SOC_REDIRECT_URI`,
-`SOC_SOAR_BASE_URL`, `SOC_TENANT`, `SOC_EDR_BASE_URL`, `SOC_SIEM_BASE_URL`,
-`SOC_NSM_BASE_URL`. Biến môi trường thắng file, và `config:` trong preset thắng cả hai.
+Nếu một hệ nằm ngoài quy ước subdomain, ghi đè riêng hệ đó bằng `iamUrl`, `redirectUri`,
+`soarBaseUrl`, `edrBaseUrl`, `siemBaseUrl` hoặc `nsmBaseUrl` trong cùng file.
 
-Thiếu khoá nào thì `soc_login` báo tên khoá và đường dẫn file cần sửa. Tài khoản và
-mật khẩu vẫn nhập trong Settings, OTP vẫn hỏi lúc chạy.
+Chưa khai gì thì `soc_login` báo còn thiếu tên miền và chỉ ba nơi có thể khai.
 
 Tên hiển thị của preset mặc định là `SOC Cloud`. Đặt `DSH_SOC_PRESET_LABEL` lúc build
 để đổi.

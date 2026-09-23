@@ -515,6 +515,39 @@ describe('SocAuthService endpoints configured in the app', () => {
   })
 })
 
+describe('SocAuthService configured by one domain', () => {
+  it('derives every system from the platform domain a user typed', async () => {
+    const svc = new SocAuthService({
+      endpoints: () => ({ values: {}, missing: ['socDomain'], filePath: '/x' }),
+      endpointOverrides: async () => ({ socDomain: 'example.com' }),
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: vi.fn(async () => { throw new Error('the network must not be touched') }) as any,
+    })
+    // login would reach the network; the derivation is what matters here
+    await svc.login(OTP).catch(() => {})
+    expect(svc.iamUrl).toBe('https://iam.example.com')
+    expect(svc.soarBaseUrl).toBe('https://soar.example.com')
+    expect(svc.edrBaseUrl).toBe('https://edr.example.com')
+    expect(svc.siemBaseUrl).toBe('https://siem.example.com')
+    expect(svc.nsmBaseUrl).toBe('https://nsm.example.com')
+  })
+
+  it('keeps a system that the deployment pinned by hand', async () => {
+    const svc = new SocAuthService({
+      endpoints: () => ({
+        values: { socDomain: 'example.com', siemBaseUrl: 'https://siem-2.example.net' },
+        missing: [],
+        filePath: '/x',
+      }),
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: stubFetch([]) as any,
+    })
+    await svc.login(OTP)
+    expect(svc.siemBaseUrl).toBe('https://siem-2.example.net')
+    expect(svc.nsmBaseUrl).toBe('https://nsm.example.com')
+  })
+})
+
 describe('SocAuthService session lifetime', () => {
   it('does not let an in-flight exchange revive a session that was invalidated', async () => {
     // The exchange is already running when the session is dropped; its write

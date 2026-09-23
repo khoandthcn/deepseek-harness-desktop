@@ -39,15 +39,9 @@ export const SOC_CREDENTIALS_NS = 'soc-credentials'
  * user who installed a public build has to be able to type them in.
  */
 const SocCredentialsSection = z.object({
-  iamUrl: z.string().default(''),
+  socDomain: z.string().default(''),
   clientId: z.string().default(''),
-  redirectUri: z.string().default(''),
-  soarBaseUrl: z.string().default(''),
   tenant: z.string().default(''),
-  soarClientId: z.string().default(''),
-  edrBaseUrl: z.string().default(''),
-  siemBaseUrl: z.string().default(''),
-  nsmBaseUrl: z.string().default(''),
 })
 
 /**
@@ -55,17 +49,16 @@ const SocCredentialsSection = z.object({
  * each stored under the credential reference of the same shape as the username
  * and password. They are configuration rather than secrets, but that store is
  * the one the card can write to, and it keeps every SOC setting in one place.
+ *
+ * Three fields, not one per system: the platform hosts each system on a
+ * subdomain of one root, so the domain configures all of them (see
+ * `deriveFromDomain`). A deployment that departs from that convention pins the
+ * odd URL in `soc-endpoints.json` or in its preset row instead.
  */
 export const SOC_ENDPOINT_FIELDS = [
-  'iamUrl',
+  'socDomain',
   'clientId',
-  'redirectUri',
-  'soarBaseUrl',
   'tenant',
-  'soarClientId',
-  'edrBaseUrl',
-  'siemBaseUrl',
-  'nsmBaseUrl',
 ] as const
 
 /**
@@ -91,6 +84,11 @@ export const inject: string[] = []
  * `endpoints.ts`), and a row only pins what a particular deployment must fix.
  */
 export interface Config {
+  /**
+   * The platform's root domain, e.g. `soc.example.com`. Every system's URL is
+   * derived from it; the per-system fields below only pin an exception.
+   */
+  socDomain?: string | undefined
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
   iamUrl?: string | undefined
   clientId?: string | undefined
@@ -219,15 +217,9 @@ export function apply(ctx: Context, config: Config | undefined): void {
 function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
-      iamUrl: '',
+      socDomain: '',
       clientId: '',
-      redirectUri: '',
-      soarBaseUrl: '',
       tenant: '',
-      soarClientId: '',
-      edrBaseUrl: '',
-      siemBaseUrl: '',
-      nsmBaseUrl: '',
     }, {
       setSource: () => {},
       onChange: () => {},

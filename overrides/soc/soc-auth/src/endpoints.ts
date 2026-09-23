@@ -33,12 +33,28 @@ interface EndpointField {
   readonly required: boolean
 }
 
+/**
+ * The platform hosts one system per subdomain of one root: `iam` signs in,
+ * `soc` is the portal every system calls back to, and the rest are the systems
+ * themselves. One domain therefore configures the whole deployment, and the
+ * per-system URLs below exist only for a deployment that departs from it.
+ */
+export const SOC_SUBDOMAINS: Readonly<Record<string, string>> = {
+  iamUrl: 'iam',
+  redirectUri: 'soc',
+  soarBaseUrl: 'soar',
+  edrBaseUrl: 'edr',
+  siemBaseUrl: 'siem',
+  nsmBaseUrl: 'nsm',
+}
+
 /** Every endpoint field soc-auth understands, in the order errors list them. */
 export const ENDPOINT_FIELDS: readonly EndpointField[] = [
-  { key: 'iamUrl', env: 'SOC_IAM_URL', required: true },
-  { key: 'clientId', env: 'SOC_CLIENT_ID', required: true },
-  { key: 'redirectUri', env: 'SOC_REDIRECT_URI', required: true },
-  { key: 'soarBaseUrl', env: 'SOC_SOAR_BASE_URL', required: true },
+  { key: 'socDomain', env: 'SOC_DOMAIN', required: true },
+  { key: 'clientId', env: 'SOC_CLIENT_ID', required: false },
+  { key: 'iamUrl', env: 'SOC_IAM_URL', required: false },
+  { key: 'redirectUri', env: 'SOC_REDIRECT_URI', required: false },
+  { key: 'soarBaseUrl', env: 'SOC_SOAR_BASE_URL', required: false },
   { key: 'tenant', env: 'SOC_TENANT', required: false },
   { key: 'soarClientId', env: 'SOC_SOAR_CLIENT_ID', required: false },
   { key: 'edrBaseUrl', env: 'SOC_EDR_BASE_URL', required: false },
@@ -48,6 +64,22 @@ export const ENDPOINT_FIELDS: readonly EndpointField[] = [
   { key: 'nsmBaseUrl', env: 'SOC_NSM_BASE_URL', required: false },
   { key: 'nsmClientId', env: 'SOC_NSM_CLIENT_ID', required: false },
 ]
+
+/**
+ * Fill in every per-system URL a domain implies, leaving anything already set
+ * alone: an explicit URL always wins over the convention.
+ * @param values - what the sources supplied.
+ * @returns the same values with the derived URLs added.
+ */
+export function deriveFromDomain(values: Record<string, string>): Record<string, string> {
+  const domain = values.socDomain?.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+  if (domain === undefined || domain === '') return values
+  const derived: Record<string, string> = { ...values }
+  for (const [key, subdomain] of Object.entries(SOC_SUBDOMAINS)) {
+    if (derived[key] === undefined) derived[key] = `https://${subdomain}.${domain}`
+  }
+  return derived
+}
 
 /** The file an administrator drops next to the profile. */
 export const ENDPOINTS_FILE = 'soc-endpoints.json'
@@ -116,15 +148,18 @@ export function resolveEndpoints(opts: {
     const value = env[name]?.trim()
     if (value !== undefined && value !== '') fromEnv[key] = value
   }
-  const values = {
+  const values = deriveFromDomain({
     ...readFile(filePath),
     ...fromEnv,
     ...stringsOf(opts.settings ?? {}),
     ...stringsOf(opts.config ?? {}),
-  }
-  const missing = ENDPOINT_FIELDS
-    .filter(field => field.required && values[field.key] === undefined)
-    .map(field => field.key)
+  })
+  // The domain is what a deployment normally sets, but one that pins every URL
+  // by hand owes no domain: what must hold is that sign-in has somewhere to go.
+  const SIGN_IN_KEYS = ['iamUrl', 'redirectUri', 'soarBaseUrl']
+  const missing = SIGN_IN_KEYS.every(key => values[key] !== undefined)
+    ? []
+    : ENDPOINT_FIELDS.filter(field => field.required && values[field.key] === undefined).map(field => field.key)
   return { values, missing, filePath }
 }
 
@@ -138,8 +173,10 @@ export function missingEndpointsMessage(resolved: ResolvedEndpoints): string {
   const envNames = ENDPOINT_FIELDS
     .filter(field => resolved.missing.includes(field.key))
     .map(field => field.env)
-  return `SOC endpoints are not configured: ${resolved.missing.join(', ')} are unset. `
-    + 'Fill them in under Settings → Plugins → SOC Cloud, '
-    + `or write them into ${resolved.filePath} (a JSON object), `
+  return `SOC endpoints are not configured: ${resolved.missing.join(', ')} ${
+    resolved.missing.length === 1 ? 'is' : 'are'} unset. `
+    + 'Fill that in under Settings → Plugins → SOC Cloud — the platform domain alone configures every '
+    + 'system, e.g. "soc.example.com" — '
+    + `or write it into ${resolved.filePath} (a JSON object), `
     + `or set ${envNames.join(', ')} in the environment.`
 }

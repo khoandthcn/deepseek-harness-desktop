@@ -38,16 +38,31 @@ export const name = 'tool-soc-vti'
 
 export const inject = ['tools']
 
-/** The credential references the account is stored under. */
+/** The credential references the account and the platform are stored under. */
 export const VTI_USERNAME_REF = 'VTI_USERNAME'
 export const VTI_API_KEY_REF = 'VTI_API_KEY'
+export const VTI_DOMAIN_REF = 'VTI_DOMAIN'
 
-/** The vendor's public API host, which a deployment may override. */
-export const VTI_DEFAULT_BASE_URL = 'https://api.ti.example'
+/** The vendor's platform, whose API lives on the `api` subdomain of it. */
+export const VTI_DEFAULT_DOMAIN = 'ti.example'
+
+/**
+ * The API base URL one platform domain implies. The vendor hosts the API on
+ * `api.<domain>`, so a deployment names the domain and nothing else.
+ * @param domain - the platform domain, with or without a scheme.
+ * @returns the base URL to call.
+ */
+export function vtiBaseUrl(domain: string): string {
+  const bare = domain.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
+  if (bare === '') return `https://api.${VTI_DEFAULT_DOMAIN}`
+  return bare.startsWith('api.') ? `https://${bare}` : `https://api.${bare}`
+}
 
 export interface Config {
-  /** Override the API host; defaults to the vendor's public one. */
+  /** Override the API base URL outright; normally the domain is enough. */
   baseUrl?: string | undefined
+  /** The platform domain, e.g. `ti.example`; the API is `api.<domain>`. */
+  domain?: string | undefined
   /** Credential reference holding the account email; defaults to `VTI_USERNAME`. */
   usernameRef?: string | undefined
   /** Credential reference holding the API key; defaults to `VTI_API_KEY`. */
@@ -78,9 +93,16 @@ async function readCredential(ctx: Context, ref: string): Promise<string | undef
  *   config at all, so this arrives as `undefined`.
  */
 export function apply(ctx: Context, config: Config = {}): void {
-  const baseUrl = config.baseUrl ?? VTI_DEFAULT_BASE_URL
   const usernameRef = config.usernameRef ?? VTI_USERNAME_REF
   const apiKeyRef = config.apiKeyRef ?? VTI_API_KEY_REF
+
+  /**
+   * The API host. A row may pin it, otherwise it follows the platform domain
+   * this user configured, and failing that the vendor's own. Read per request,
+   * like the credentials, so a correction takes effect without a restart.
+   */
+  let domain: string | undefined
+  const baseUrl = (): string => config.baseUrl ?? vtiBaseUrl(domain ?? config.domain ?? '')
 
   /**
    * The Basic header, once an account is configured. Held here rather than
@@ -90,10 +112,12 @@ export function apply(ctx: Context, config: Config = {}): void {
   let authorization: string | undefined
   const ensureAuthorization = async (): Promise<boolean> => {
     if (authorization !== undefined) return true
-    const [username, apiKey] = await Promise.all([
+    const [username, apiKey, configuredDomain] = await Promise.all([
       readCredential(ctx, usernameRef),
       readCredential(ctx, apiKeyRef),
+      readCredential(ctx, VTI_DOMAIN_REF),
     ])
+    domain = configuredDomain
     if (username === undefined || apiKey === undefined) return false
     authorization = `Basic ${Buffer.from(`${username}:${apiKey}`).toString('base64')}`
     return true

@@ -44,31 +44,30 @@ const PASSWORD_FIELD = 'password'
  * The Threat Intelligence account, which is a different platform with its own
  * sign-in: an account email and an API key, both written like the SOC ones.
  */
-export const VTI_FIELDS = ['vtiUsername', 'vtiApiKey'] as const
+export const VTI_FIELDS = ['vtiDomain', 'vtiUsername', 'vtiApiKey'] as const
 
 export type VtiField = typeof VTI_FIELDS[number]
 
 /** The reference one Threat Intelligence field is stored under. */
 export function vtiRef(field: VtiField): string {
+  if (field === 'vtiDomain') return 'VTI_DOMAIN'
   return field === 'vtiUsername' ? 'VTI_USERNAME' : 'VTI_API_KEY'
 }
 
 /**
- * The deployment's endpoints, which this card also writes. They are
+ * The deployment's settings, which this card also writes. They are
  * configuration rather than secrets, but they share the credentials store: it
  * is the one surface this card can write to, and it keeps every SOC setting in
  * one place. `soc-auth` reads the same references when it signs in.
+ *
+ * One domain, not one URL per system: the platform hosts each system on a
+ * subdomain of one root, so the domain configures all of them. A deployment
+ * that departs from that convention pins the odd URL in `soc-endpoints.json`.
  */
 export const ENDPOINT_FIELDS = [
-  'iamUrl',
+  'socDomain',
   'clientId',
-  'redirectUri',
-  'soarBaseUrl',
   'tenant',
-  'soarClientId',
-  'edrBaseUrl',
-  'siemBaseUrl',
-  'nsmBaseUrl',
 ] as const
 
 export type EndpointField = typeof ENDPOINT_FIELDS[number]
