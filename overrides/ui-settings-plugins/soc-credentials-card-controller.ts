@@ -1,14 +1,19 @@
 /**
- * The SOC Cloud credentials card's staged form over the SOC sign-in the SOC
- * Cloud tools use.
+ * The staged forms behind the two SOC cards in Settings.
  *
- * Both controls live outside any settings section: their literals never ride a
- * response, so the card learns only whether each is configured and writes them
- * through the credentials domain, addressed by the fixed references the
- * `soc-auth` Host plugin reads. That plugin is composed only inside the
- * `soc-cloud` preset, per agent session, so the card gates on no settings
- * namespace — it always renders, and the credentials domain is its one backing
- * store.
+ * Both cards write through the **credentials domain**, not into a settings
+ * section: a credential's literal never rides a response, so each control
+ * learns only whether the Host holds a value for its reference. The platform's
+ * domain and tenant are configuration rather than secrets, but they share the
+ * store because it is the one surface a card can write to, and because it keeps
+ * every setting of one platform in one place. `soc-auth` reads the same
+ * references when it signs in.
+ *
+ * There are two cards because there are two platforms: the SOC systems behind
+ * one sign-in, and the Threat Intelligence platform, which is a separate
+ * account on a separate host. Each card saves on its own.
+ *
+ * @module
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -21,67 +26,45 @@ import {
 } from './card-form.ts'
 
 /**
- * Nominal namespace this card binds its form to. No Host plugin serves it, so
- * the bound scope never turns ready; the card forces its own availability and
- * reads state from the credentials domain instead. It doubles as the card's
- * keyed slot key.
+ * Namespace of the SOC card. Its values do not live in that section — they go
+ * through the credentials domain — but the Plugins tab dispatches a card only
+ * for a namespace the Host serves, so the section exists to say "this
+ * deployment has SOC Cloud".
  */
 export const SOC_CREDENTIALS_NS = 'soc-credentials'
 
-/** Credential reference holding the SOC username. */
-const USERNAME_REF = 'SOC_USERNAME'
+/** Namespace of the Threat Intelligence card, for the same reason. */
+export const SOC_TI_NS = 'soc-threat-intel'
 
-/** Credential reference holding the SOC password. */
-const PASSWORD_REF = 'SOC_PASSWORD'
-
-/** Form field the username control stages under. */
-const USERNAME_FIELD = 'username'
-
-/** Form field the password control stages under. */
-const PASSWORD_FIELD = 'password'
-
-/**
- * The Threat Intelligence account, which is a different platform with its own
- * sign-in: an account email and an API key, both written like the SOC ones.
- */
-export const VTI_FIELDS = ['vtiDomain', 'vtiUsername', 'vtiApiKey'] as const
-
-export type VtiField = typeof VTI_FIELDS[number]
-
-/** The reference one Threat Intelligence field is stored under. */
-export function vtiRef(field: VtiField): string {
-  if (field === 'vtiDomain') return 'VTI_DOMAIN'
-  return field === 'vtiUsername' ? 'VTI_USERNAME' : 'VTI_API_KEY'
+/** One control on a card: the form field it stages under, and where it is kept. */
+export interface CardCredentialField {
+  /** The field name, which is also the locale key suffix (`soc_<field>`). */
+  readonly field: string
+  /** The credential reference the Host stores it under. */
+  readonly ref: string
 }
 
 /**
- * The deployment's settings, which this card also writes. They are
- * configuration rather than secrets, but they share the credentials store: it
- * is the one surface this card can write to, and it keeps every SOC setting in
- * one place. `soc-auth` reads the same references when it signs in.
+ * The SOC card's controls: the platform domain every system's URL is derived
+ * from, the tenant its SOAR tools query, and the sign-in itself.
  *
- * One domain, not one URL per system: the platform hosts each system on a
- * subdomain of one root, so the domain configures all of them. A deployment
- * that departs from that convention pins the odd URL in `soc-endpoints.json`.
+ * The portal's OAuth client id is deliberately absent. IAM needs one to accept
+ * an authorize, but it is fixed per platform and no user ever changes it, so it
+ * belongs in `soc-endpoints.json` or the preset row, not on a card.
  */
-export const ENDPOINT_FIELDS = [
-  'socDomain',
-  'clientId',
-  'tenant',
-] as const
+export const SOC_FIELDS: readonly CardCredentialField[] = [
+  { field: 'socDomain', ref: 'SOC_DOMAIN' },
+  { field: 'tenant', ref: 'SOC_TENANT' },
+  { field: 'socUsername', ref: 'SOC_USERNAME' },
+  { field: 'socPassword', ref: 'SOC_PASSWORD' },
+]
 
-export type EndpointField = typeof ENDPOINT_FIELDS[number]
-
-/**
- * The reference one endpoint field is stored under, e.g. `iamUrl` →
- * `SOC_IAM_URL`. Spelled here as well as in `soc-auth`, because a client
- * package must not depend on a Host package.
- * @param field - the endpoint field name.
- * @returns the credential reference.
- */
-export function endpointRef(field: string): string {
-  return `SOC_${field.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`
-}
+/** The Threat Intelligence card's controls: its host and its account. */
+export const TI_FIELDS: readonly CardCredentialField[] = [
+  { field: 'vtiDomain', ref: 'VTI_DOMAIN' },
+  { field: 'vtiUsername', ref: 'VTI_USERNAME' },
+  { field: 'vtiApiKey', ref: 'VTI_API_KEY' },
+]
 
 /** What the credentials domain last reported for one reference. */
 interface CredentialState {
@@ -91,27 +74,16 @@ interface CredentialState {
   writable: boolean
 }
 
-/** What the SOC Cloud credentials card renders. */
+/** One rendered control: its staged draft plus what the Host holds. */
+export type CardCredentialState = CardFieldState & CredentialState
+
+/** What either card renders. */
 export interface SocCredentialsCardState extends CardShell {
-  /** The staged username, which starts blank on every load. */
-  username: CardFieldState
-  /** Whether the Host reports a username configured for the reference. */
-  usernameConfigured: boolean
-  /** Whether the credentials domain accepts a write for the username; false disables the control. */
-  usernameWritable: boolean
-  /** The staged password, which starts blank on every load. */
-  password: CardFieldState
-  /** Whether the Host reports a password configured for the reference. */
-  passwordConfigured: boolean
-  /** Whether the credentials domain accepts a write for the password; false disables the control. */
-  passwordWritable: boolean
-  /** One staged control per endpoint, and whether the Host holds a value for it. */
-  endpoints: Record<EndpointField, CardFieldState & { configured: boolean, writable: boolean }>
-  /** The Threat Intelligence account's two controls. */
-  vti: Record<VtiField, CardFieldState & { configured: boolean, writable: boolean }>
+  /** One entry per control, keyed by field, in the card's own order. */
+  fields: Record<string, CardCredentialState>
 }
 
-/** The registration-side face the SOC Cloud credentials card's slot entry injects. */
+/** The registration-side face a card's slot entry injects. */
 export interface SocCredentialsCardFace extends CardActions {
   hooks: {
     /** Card snapshot bound by the renderer as useSocCredentialsCard. */
@@ -126,45 +98,32 @@ export interface SocCredentialsCardFace extends CardActions {
  */
 const UNKNOWN_CREDENTIAL: CredentialState = { configured: false, writable: true }
 
-/** Bridges the SOC sign-in credentials onto the always-rendered card. */
+/** Bridges one platform's credential references onto its card. */
 export class SocCredentialsCardController {
   private readonly form: CardForm<Record<string, never>>
   private readonly store: SnapshotStore<SocCredentialsCardState>
-  private username: CredentialState = UNKNOWN_CREDENTIAL
-  private password: CredentialState = UNKNOWN_CREDENTIAL
-  private endpointStates: Record<string, CredentialState> = Object.fromEntries(
-    ENDPOINT_FIELDS.map(field => [field, UNKNOWN_CREDENTIAL]),
-  )
-
-  private vtiStates: Record<string, CredentialState> = Object.fromEntries(
-    VTI_FIELDS.map(field => [field, UNKNOWN_CREDENTIAL]),
-  )
+  private states: Record<string, CredentialState>
 
   /**
-   * @param scope - a bound settings scope used only to drive the shared form
-   * model; no Host plugin serves its namespace.
-   * @param ctx - the card plugin's context, whose `remote.credentials` namespace
-   * answers for the two SOC references.
+   * @param scope - a bound settings scope, used only to drive the shared form
+   *   model; this card's values live in the credentials domain.
+   * @param ctx - the card plugin's context, whose `remote.credentials`
+   *   namespace answers for this card's references.
+   * @param fields - the controls this card carries, in render order.
    */
   constructor(
     scope: SettingsScope<Record<string, never>>,
     private readonly ctx: ClientContext,
+    private readonly fields: readonly CardCredentialField[],
   ) {
+    this.states = Object.fromEntries(fields.map(entry => [entry.field, UNKNOWN_CREDENTIAL]))
     this.form = new CardForm(
       scope,
       [],
-      [
-        { field: USERNAME_FIELD, write: text => this.writeRef(USERNAME_REF, text) },
-        { field: PASSWORD_FIELD, write: text => this.writeRef(PASSWORD_REF, text) },
-        ...ENDPOINT_FIELDS.map(field => ({
-          field,
-          write: (text: string) => this.writeRef(endpointRef(field), text),
-        })),
-        ...VTI_FIELDS.map(field => ({
-          field,
-          write: (text: string) => this.writeRef(vtiRef(field), text),
-        })),
-      ],
+      fields.map(entry => ({
+        field: entry.field,
+        write: (text: string) => this.writeRef(entry.ref, text),
+      })),
     )
     this.store = this.form.bind(() => this.projection())
     void this.readCredentials()
@@ -173,63 +132,38 @@ export class SocCredentialsCardController {
   private projection(): SocCredentialsCardState {
     return {
       ...this.form.shell(),
-      // The card always renders: gating on a settings namespace would flicker
-      // it in and out, because the soc-auth Host plugin is composed only inside
-      // the soc-cloud preset.
+      // The card always renders: its Host section exists to say the deployment
+      // has this platform, and carries no values to wait for.
       available: true,
-      // The credentials domain, not a settings document, is this card's store;
+      // The credentials domain, not a settings document, is the backing store;
       // its writability is what the shell reports.
-      writable: this.username.writable || this.password.writable
-        || ENDPOINT_FIELDS.some(field => this.endpointStates[field]?.writable ?? true),
-      username: this.form.field(USERNAME_FIELD),
-      usernameConfigured: this.username.configured,
-      usernameWritable: this.username.writable,
-      password: this.form.field(PASSWORD_FIELD),
-      passwordConfigured: this.password.configured,
-      passwordWritable: this.password.writable,
-      endpoints: Object.fromEntries(ENDPOINT_FIELDS.map(field => [field, {
-        ...this.form.field(field),
-        configured: this.endpointStates[field]?.configured ?? false,
-        writable: this.endpointStates[field]?.writable ?? true,
-      }])) as SocCredentialsCardState['endpoints'],
-      vti: Object.fromEntries(VTI_FIELDS.map(field => [field, {
-        ...this.form.field(field),
-        configured: this.vtiStates[field]?.configured ?? false,
-        writable: this.vtiStates[field]?.writable ?? true,
-      }])) as SocCredentialsCardState['vti'],
+      writable: this.fields.some(entry => this.states[entry.field]?.writable ?? true),
+      fields: Object.fromEntries(this.fields.map(entry => [entry.field, {
+        ...this.form.field(entry.field),
+        configured: this.states[entry.field]?.configured ?? false,
+        writable: this.states[entry.field]?.writable ?? true,
+      }])),
     }
   }
 
   /**
-   * Read whether the Host holds each SOC credential, in one describe batch.
-   * A failed read leaves the last-known states in place.
+   * Read whether the Host holds each of this card's references, in one describe
+   * batch. A failed read leaves the last-known states in place.
    */
   private async readCredentials(): Promise<void> {
-    const refs = [
-      USERNAME_REF,
-      PASSWORD_REF,
-      ...ENDPOINT_FIELDS.map(endpointRef),
-      ...VTI_FIELDS.map(vtiRef),
-    ]
-    const response = await this.ctx.remote.credentials.describe(refs)
+    const response = await this.ctx.remote.credentials.describe(this.fields.map(entry => entry.ref))
     if (!response.ok) return
-    const read = (ref: string): CredentialState => {
-      const view = response.value[ref]
+    this.states = Object.fromEntries(this.fields.map((entry) => {
+      const view = response.value[entry.ref]
       // An unknown reference is treated as writable: the control stays usable
       // and the Host is what refuses, rather than the card guessing a refusal.
-      return { configured: view?.configured ?? false, writable: view?.writable ?? true }
-    }
-    this.username = read(USERNAME_REF)
-    this.password = read(PASSWORD_REF)
-    this.endpointStates = Object.fromEntries(
-      ENDPOINT_FIELDS.map(field => [field, read(endpointRef(field))]),
-    )
-    this.vtiStates = Object.fromEntries(VTI_FIELDS.map(field => [field, read(vtiRef(field))]))
+      return [entry.field, { configured: view?.configured ?? false, writable: view?.writable ?? true }]
+    }))
     this.store.set(this.projection())
   }
 
   /**
-   * Re-read after the Host reports a change to either SOC reference.
+   * Re-read after the Host reports a change to one of this card's references.
    *
    * A credential can be written from elsewhere — the file store, another
    * surface — without any settings section changing, so this event is the only
@@ -237,15 +171,12 @@ export class SocCredentialsCardController {
    * @param ref - the reference the Host reports as changed.
    */
   refreshCredential(ref: string): void {
-    const known = ref === USERNAME_REF || ref === PASSWORD_REF
-      || ENDPOINT_FIELDS.some(field => endpointRef(field) === ref)
-      || VTI_FIELDS.some(field => vtiRef(field) === ref)
-    if (!known) return
+    if (!this.fields.some(entry => entry.ref === ref)) return
     void this.readCredentials()
   }
 
   /**
-   * Build the face the card's slot registration injects.
+   * Build the face this card's slot registration injects.
    * @returns the card's snapshot and its form actions.
    */
   inject(): SocCredentialsCardFace {
@@ -253,22 +184,18 @@ export class SocCredentialsCardController {
   }
 
   /**
-   * Write one staged credential, then re-read whether the Host now holds it.
-   * The value is never logged or echoed.
+   * Write one staged value, then re-read whether the Host now holds it. The
+   * value is never logged or echoed.
    * @param ref - the credential reference to write.
    * @param value - the staged literal.
    * @returns whether the Host reports the reference configured afterwards.
    */
   private async writeRef(ref: string, value: string): Promise<boolean> {
     // Refusals surface through the re-read: the Host is the only authority on
-    // whether the credential now exists.
+    // whether the value now exists.
     await this.ctx.remote.credentials.set(ref, value)
     await this.readCredentials()
-    if (ref === USERNAME_REF) return this.username.configured
-    if (ref === PASSWORD_REF) return this.password.configured
-    const field = ENDPOINT_FIELDS.find(name => endpointRef(name) === ref)
-    if (field !== undefined) return this.endpointStates[field]?.configured ?? false
-    const vtiField = VTI_FIELDS.find(name => vtiRef(name) === ref)
-    return vtiField === undefined ? false : this.vtiStates[vtiField]?.configured ?? false
+    const field = this.fields.find(entry => entry.ref === ref)?.field
+    return field === undefined ? false : this.states[field]?.configured ?? false
   }
 }

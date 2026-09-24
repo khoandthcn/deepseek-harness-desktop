@@ -136,23 +136,17 @@ File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.js
 và mỗi đoạn vá phải khớp đúng một đoạn mã upstream; nếu upstream đổi, script dừng với lỗi rõ ràng
 thay vì tạo ra bản build hỏng.
 
-## Cấu hình hệ thống SOC trên từng máy
+## Cấu hình trên từng máy
 
-Bản cài không chứa địa chỉ hệ thống nào. Mỗi máy tự khai, và chỉ cần **một tên miền gốc**:
-các hệ IAM, SOAR, EDR, SIEM, NSM đều nằm ở subdomain của nó nên được suy ra.
+Bản cài không chứa địa chỉ hệ thống nào. Settings, mục Plugins có hai thẻ:
 
-Cách dễ nhất là mở Settings, mục Plugins, thẻ SOC Cloud, rồi điền:
+**SOC Cloud** — tên miền nền tảng, tenant, tài khoản và mật khẩu. Các hệ IAM, SOAR,
+EDR, SIEM, NSM đều nằm ở subdomain của tên miền đó nên được suy ra. OTP hỏi lúc chạy.
 
-| Ô | Ý nghĩa |
-|---|---|
-| SOC platform domain | Tên miền gốc, ví dụ `soc.example.com` |
-| Portal client id | Mã OAuth client của cổng, hỏi quản trị SOC |
-| Tenant | Tenant cho tool SOAR, để trống là `MASTER` |
-| SOC username, SOC password | Tài khoản đăng nhập, OTP vẫn hỏi lúc chạy |
-| Threat Intelligence domain | Để trống là `ti.example`, API là `api.<tên miền>` |
-| Threat Intelligence account, API key | Email và khoá của nền tảng TI |
+**Threat Intelligence** — tên miền nền tảng (để trống là `ti.example`), email tài
+khoản và API key. Đây là nền tảng riêng với tài khoản riêng.
 
-Hai cách khác, dùng khi phát cho nhiều máy. Tạo file `~/.dsh/soc-endpoints.json`:
+Muốn phát cho nhiều máy thì dùng file `~/.dsh/soc-endpoints.json`:
 
 ```json
 {
@@ -162,13 +156,15 @@ Hai cách khác, dùng khi phát cho nhiều máy. Tạo file `~/.dsh/soc-endpoi
 }
 ```
 
-Hoặc đặt biến môi trường `SOC_DOMAIN`, `SOC_CLIENT_ID`, `SOC_TENANT`. Thứ tự ưu tiên là
+Hoặc biến môi trường `SOC_DOMAIN`, `SOC_CLIENT_ID`, `SOC_TENANT`. Thứ tự ưu tiên là
 file, rồi biến môi trường, rồi ô trong Settings, cuối cùng là `config:` trong preset.
+
+`clientId` là mã OAuth mà hệ đăng nhập tập trung dùng để nhận ra ứng dụng cổng SOC.
+Nó cố định theo nền tảng và người dùng không đổi, nên chỉ khai ở file hoặc preset,
+không đưa lên giao diện.
 
 Nếu một hệ nằm ngoài quy ước subdomain, ghi đè riêng hệ đó bằng `iamUrl`, `redirectUri`,
 `soarBaseUrl`, `edrBaseUrl`, `siemBaseUrl` hoặc `nsmBaseUrl` trong cùng file.
-
-Chưa khai gì thì `soc_login` báo còn thiếu tên miền và chỉ ba nơi có thể khai.
 
 Tên hiển thị của preset mặc định là `SOC Cloud`. Đặt `DSH_SOC_PRESET_LABEL` lúc build
 để đổi.

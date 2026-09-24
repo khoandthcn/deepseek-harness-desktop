@@ -38,17 +38,19 @@ async function mount(config: Record<string, unknown> | undefined = {}) {
 }
 
 describe('soc-auth mounting', () => {
-  it('installs the settings section the SOC Cloud card is keyed to', async () => {
+  it('installs the section each card is keyed to: one per platform', async () => {
     const { installed } = await mount()
-    expect(installed.map(entry => entry.ns)).toEqual([socAuth.SOC_CREDENTIALS_NS])
+    expect(installed.map(entry => entry.ns)).toEqual([socAuth.SOC_CREDENTIALS_NS, socAuth.SOC_TI_NS])
   })
 
-  it('offers every endpoint field in that section, so the card can render them', async () => {
+  it('offers the SOC settings in that section, so the card can render them', async () => {
     const { installed } = await mount()
     const entry = installed[0]!.entry
     for (const field of socAuth.SOC_ENDPOINT_FIELDS) {
       expect(Object.keys(entry), field).toContain(field)
     }
+    // the portal client id is not a card field: it is fixed per platform
+    expect(Object.keys(entry)).not.toContain('clientId')
   })
 
   it('mounts with no config block at all, as the preset row has none', async () => {
@@ -57,9 +59,9 @@ describe('soc-auth mounting', () => {
     expect(ctx.socAuth.isAuthenticated()).toBe(false)
   })
 
-  it('can serve the settings section alone, for a Host that mounts no session', async () => {
+  it('can serve the settings sections alone, for a Host that mounts no session', async () => {
     const { ctx, installed } = await mount({ settingsOnly: true })
-    expect(installed.map(entry => entry.ns)).toEqual([socAuth.SOC_CREDENTIALS_NS])
+    expect(installed.map(entry => entry.ns)).toEqual([socAuth.SOC_CREDENTIALS_NS, socAuth.SOC_TI_NS])
     // no service: this row exists so the card has a namespace before any
     // session mounts the preset
     expect(ctx.get('socAuth')).toBeUndefined()

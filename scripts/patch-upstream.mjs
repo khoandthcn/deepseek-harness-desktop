@@ -480,13 +480,13 @@ const PLUGINS_INDEX = `${UI_SETTINGS_PLUGINS_CLIENT}/index.ts`
 patch(
   PLUGINS_INDEX,
   "import { WebSearchCard } from './WebSearchCard.tsx'\n",
-  "import { WebSearchCard } from './WebSearchCard.tsx'\nimport { SocCredentialsCard } from './SocCredentialsCard.tsx'\n",
+  "import { WebSearchCard } from './WebSearchCard.tsx'\nimport { SocCredentialsCard, SocThreatIntelCard } from './SocCredentialsCard.tsx'\n",
 )
 patch(
   PLUGINS_INDEX,
   "import { WEB_SEARCH_NS, WebSearchCardController } from './web-search-card-controller.ts'\n",
   "import { WEB_SEARCH_NS, WebSearchCardController } from './web-search-card-controller.ts'\n"
-  + "import { SOC_CREDENTIALS_NS, SocCredentialsCardController } from './soc-credentials-card-controller.ts'\n",
+  + "import { SOC_CREDENTIALS_NS, SOC_TI_NS, SOC_FIELDS, TI_FIELDS, SocCredentialsCardController } from './soc-credentials-card-controller.ts'\n",
 )
 patch(
   PLUGINS_INDEX,
@@ -499,7 +499,9 @@ patch(
   "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n",
   "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n"
   + "  const socCredentials = new SocCredentialsCardController(\n"
-  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_CREDENTIALS_NS }), ctx)\n",
+  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_CREDENTIALS_NS }), ctx, SOC_FIELDS)\n"
+  + "  const socThreatIntel = new SocCredentialsCardController(\n"
+  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_TI_NS }), ctx, TI_FIELDS)\n",
 )
 patch(
   PLUGINS_INDEX,
@@ -507,6 +509,7 @@ patch(
   "    () => ctx.remote.$on('credentials/reference-updated', (ref) => {\n"
   + '      webSearch.refreshCredential(ref)\n'
   + '      socCredentials.refreshCredential(ref)\n'
+  + '      socThreatIntel.refreshCredential(ref)\n'
   + '    }),\n',
 )
 patch(
@@ -518,7 +521,13 @@ patch(
   + '      key: SOC_CREDENTIALS_NS,\n'
   + '      locale: NS,\n'
   + '      inject: () => socCredentials.inject(),\n'
-  + '    }, SocCredentialsCard)\n  })\n',
+  + '    }, SocCredentialsCard)\n'
+  + '    yield ctx.slots.register({\n'
+  + "      name: 'settings.plugin.item',\n"
+  + '      key: SOC_TI_NS,\n'
+  + '      locale: NS,\n'
+  + '      inject: () => socThreatIntel.inject(),\n'
+  + '    }, SocThreatIntelCard)\n  })\n',
 )
 
 // Locale keys the card renders (verify-client-ui-i18n requires locale-owned copy).
@@ -529,22 +538,18 @@ patch(
   "  | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'\n"
   + "  | 'socTitle'\n"
   + "  | 'socDescription'\n"
-  + "  | 'socUsername'\n"
-  + "  | 'socUsernameHint'\n"
-  + "  | 'socUsernameSet'\n"
-  + "  | 'socUsernameUnset'\n"
-  + "  | 'socPassword'\n"
-  + "  | 'socPasswordHint'\n"
-  + "  | 'socPasswordSet'\n"
-  + "  | 'socPasswordUnset'\n"
+  + "  | 'tiTitle'\n"
+  + "  | 'tiDescription'\n"
   + "  | 'socValueSet'\n"
   + "  | 'socValueUnset'\n"
   + "  | 'soc_socDomain'\n"
   + "  | 'soc_socDomainHint'\n"
-  + "  | 'soc_clientId'\n"
-  + "  | 'soc_clientIdHint'\n"
   + "  | 'soc_tenant'\n"
   + "  | 'soc_tenantHint'\n"
+  + "  | 'soc_socUsername'\n"
+  + "  | 'soc_socUsernameHint'\n"
+  + "  | 'soc_socPassword'\n"
+  + "  | 'soc_socPasswordHint'\n"
   + "  | 'soc_vtiDomain'\n"
   + "  | 'soc_vtiDomainHint'\n"
   + "  | 'soc_vtiUsername'\n"
@@ -557,28 +562,24 @@ patch(
   "  subagentModelSelectionOff: 'Subagents use configured defaults or inherit the parent agent\\'s model. Saved model choices are retained.',\n}",
   "  subagentModelSelectionOff: 'Subagents use configured defaults or inherit the parent agent\\'s model. Saved model choices are retained.',\n"
   + "  socTitle: 'SOC Cloud',\n"
-  + "  socDescription: 'The SOC platform the SOC Cloud tools reach, and the accounts they use.',\n"
-  + "  socUsername: 'SOC username',\n"
-  + "  socUsernameHint: 'Stored outside the settings file. Leave blank to keep the current username.',\n"
-  + "  socUsernameSet: 'A username is configured.',\n"
-  + "  socUsernameUnset: 'No username is configured.',\n"
-  + "  socPassword: 'SOC password',\n"
-  + "  socPasswordHint: 'Stored outside the settings file. Leave blank to keep the current password.',\n"
-  + "  socPasswordSet: 'A password is configured.',\n"
-  + "  socPasswordUnset: 'No password is configured.',\n"
+  + "  socDescription: 'The SOC platform the SOAR, EDR, SIEM and NSM tools reach.',\n"
+  + "  tiTitle: 'Threat Intelligence',\n"
+  + "  tiDescription: 'The Threat Intelligence platform, which has its own account.',\n"
   + "  socValueSet: 'Configured.',\n"
   + "  socValueUnset: 'Not configured.',\n"
-  + "  soc_socDomain: 'SOC platform domain',\n"
+  + "  soc_socDomain: 'Platform domain',\n"
   + "  soc_socDomainHint: 'e.g. soc.example.com. Every system (IAM, SOAR, EDR, SIEM, NSM) is derived from it.',\n"
-  + "  soc_clientId: 'Portal client id',\n"
-  + "  soc_clientIdHint: 'The OAuth client the platform registered for its portal. Ask your SOC administrator.',\n"
   + "  soc_tenant: 'Tenant',\n"
   + "  soc_tenantHint: 'Tenant the SOAR tools query. Leave blank for MASTER.',\n"
-  + "  soc_vtiDomain: 'Threat Intelligence domain',\n"
+  + "  soc_socUsername: 'Username',\n"
+  + "  soc_socUsernameHint: 'Stored outside the settings file. Leave blank to keep the current username.',\n"
+  + "  soc_socPassword: 'Password',\n"
+  + "  soc_socPasswordHint: 'Stored outside the settings file. The one-time code is asked for at sign-in.',\n"
+  + "  soc_vtiDomain: 'Platform domain',\n"
   + "  soc_vtiDomainHint: 'Leave blank for the vendor platform (ti.example); its API is api.<domain>.',\n"
-  + "  soc_vtiUsername: 'Threat Intelligence account',\n"
+  + "  soc_vtiUsername: 'Account email',\n"
   + "  soc_vtiUsernameHint: 'The email you sign in to the Threat Intelligence platform with.',\n"
-  + "  soc_vtiApiKey: 'Threat Intelligence API key',\n"
+  + "  soc_vtiApiKey: 'API key',\n"
   + "  soc_vtiApiKeyHint: 'From that platform\\'s account page. Leave blank to keep the current key.',\n"
   + "}",
 )
@@ -587,28 +588,24 @@ patch(
   "  subagentModelSelectionOff: '关闭后，Subagent 使用配置的默认模型或继承父 Agent 的模型；已选模型会保留。',\n}",
   "  subagentModelSelectionOff: '关闭后，Subagent 使用配置的默认模型或继承父 Agent 的模型；已选模型会保留。',\n"
   + "  socTitle: 'SOC 云',\n"
-  + "  socDescription: 'SOC 云工具连接的平台及其账号。',\n"
-  + "  socUsername: 'SOC 用户名',\n"
-  + "  socUsernameHint: '不写入设置文件。留空表示保持当前用户名。',\n"
-  + "  socUsernameSet: '已配置用户名。',\n"
-  + "  socUsernameUnset: '未配置用户名。',\n"
-  + "  socPassword: 'SOC 密码',\n"
-  + "  socPasswordHint: '不写入设置文件。留空表示保持当前密码。',\n"
-  + "  socPasswordSet: '已配置密码。',\n"
-  + "  socPasswordUnset: '未配置密码。',\n"
+  + "  socDescription: 'SOAR、EDR、SIEM、NSM 工具连接的 SOC 平台。',\n"
+  + "  tiTitle: '威胁情报',\n"
+  + "  tiDescription: '威胁情报平台，使用独立账号。',\n"
   + "  socValueSet: '已配置。',\n"
   + "  socValueUnset: '未配置。',\n"
-  + "  soc_socDomain: 'SOC 平台域名',\n"
+  + "  soc_socDomain: '平台域名',\n"
   + "  soc_socDomainHint: '例如 soc.example.com；IAM、SOAR、EDR、SIEM、NSM 均由此推导。',\n"
-  + "  soc_clientId: '门户 client id',\n"
-  + "  soc_clientIdHint: '平台为门户注册的 OAuth client，可向 SOC 管理员索取。',\n"
   + "  soc_tenant: '租户',\n"
   + "  soc_tenantHint: 'SOAR 工具查询的租户；留空表示 MASTER。',\n"
-  + "  soc_vtiDomain: '威胁情报域名',\n"
+  + "  soc_socUsername: '用户名',\n"
+  + "  soc_socUsernameHint: '不写入设置文件。留空表示保持当前用户名。',\n"
+  + "  soc_socPassword: '密码',\n"
+  + "  soc_socPasswordHint: '不写入设置文件；一次性验证码在登录时询问。',\n"
+  + "  soc_vtiDomain: '平台域名',\n"
   + "  soc_vtiDomainHint: '留空表示厂商平台 ti.example；其 API 为 api.<域名>。',\n"
-  + "  soc_vtiUsername: '威胁情报账号',\n"
+  + "  soc_vtiUsername: '账号邮箱',\n"
   + "  soc_vtiUsernameHint: '登录威胁情报平台使用的邮箱。',\n"
-  + "  soc_vtiApiKey: '威胁情报 API 密钥',\n"
+  + "  soc_vtiApiKey: 'API 密钥',\n"
   + "  soc_vtiApiKeyHint: '在平台账号页获取。留空表示保持当前密钥。',\n"
   + "}",
 )
@@ -618,7 +615,9 @@ patch(
 patch(
   'packages/extensions/cordis-client-runner/src/client/slot-catalog.ts',
   "      'client-ui-settings-plugins WebSearchCard',\n    ],",
-  "      'client-ui-settings-plugins WebSearchCard',\n      'client-ui-settings-plugins SocCredentialsCard',\n    ],",
+  "      'client-ui-settings-plugins WebSearchCard',\n"
+  + "      'client-ui-settings-plugins SocCredentialsCard',\n"
+  + "      'client-ui-settings-plugins SocThreatIntelCard',\n    ],",
 )
 
 // The package test asserts the exact set of shipped cards.
@@ -626,10 +625,10 @@ const PLUGINS_TEST = 'packages/client/ui-settings-plugins/tests/apply.client.spe
 patch(
   PLUGINS_TEST,
   "      .toEqual(['shell', 'agent-loop', 'subagent-model-selection', 'web-search-deepseek'])",
-  "      .toEqual(['shell', 'agent-loop', 'subagent-model-selection', 'web-search-deepseek', 'soc-credentials'])",
+  "      .toEqual(['shell', 'agent-loop', 'subagent-model-selection', 'web-search-deepseek', 'soc-credentials', 'soc-threat-intel'])",
 )
 patch(
   PLUGINS_TEST,
   "    expect(slots.entries('settings.plugin.item')).toHaveLength(4)",
-  "    expect(slots.entries('settings.plugin.item')).toHaveLength(5)",
+  "    expect(slots.entries('settings.plugin.item')).toHaveLength(6)",
 )

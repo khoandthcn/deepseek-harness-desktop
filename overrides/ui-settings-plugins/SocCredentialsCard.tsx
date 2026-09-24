@@ -1,98 +1,91 @@
 /**
- * The SOC Cloud credentials card: the SOC username and password, each written
- * through the credentials domain rather than into any settings section, so the
- * literal never rides a response. The card always renders — it gates on no
- * settings namespace — because the plugin that reads these credentials is
- * composed only inside the soc-cloud preset, per agent session.
+ * The two SOC cards in Settings: the SOC platform with its sign-in, and the
+ * Threat Intelligence platform with its own account.
+ *
+ * Every control is write-only — the values go through the credentials domain,
+ * so a literal never rides a response — which is why each shows whether the
+ * Host holds a value rather than the value itself.
  */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { SecretField } from './fields.tsx'
-import { ENDPOINT_FIELDS, VTI_FIELDS } from './soc-credentials-card-controller.ts'
 import { PluginCard } from './PluginCard.tsx'
-import type { SocCredentialsCardFace } from './soc-credentials-card-controller.ts'
+import {
+  SOC_FIELDS, TI_FIELDS,
+  type CardCredentialField, type SocCredentialsCardFace,
+} from './soc-credentials-card-controller.ts'
 import type {} from './slot-contract.ts'
 
-/** Props the renderer binds for the SOC Cloud credentials card. */
+/** Props the renderer binds for either card. */
 export type SocCredentialsCardProps =
   PropsRuntime<'settings.plugin.item'>
   & PropsLocale<'settings.plugins'>
   & InjectFace<SocCredentialsCardFace>
 
 /**
- * Render the SOC Cloud credentials card.
+ * Render one platform's card.
  * @param props - locale copy, the card snapshot, and its form actions.
+ * @param titleKey - locale key of the card's title.
+ * @param descriptionKey - locale key of its one-line description.
+ * @param fields - the controls to render, in order.
  * @returns the card.
  */
-export function SocCredentialsCard(props: SocCredentialsCardProps) {
+function renderCard(
+  props: SocCredentialsCardProps,
+  titleKey: string,
+  descriptionKey: string,
+  fields: readonly CardCredentialField[],
+) {
   const { t } = props
   const state = props.useSocCredentialsCard(snapshot => snapshot)
   return (
     <PluginCard
       t={t}
-      titleKey="socTitle"
-      descriptionKey="socDescription"
+      titleKey={titleKey as never}
+      descriptionKey={descriptionKey as never}
       state={state}
       onSave={props.save}
       onDiscard={props.discard}
     >
-      <SecretField
-        id="plugin-config-soc-username"
-        label={t('socUsername')}
-        hint={t('socUsernameHint')}
-        // Its own writability disables the control — a value sourced from the
-        // process environment cannot be written from here.
-        disabled={!state.usernameWritable}
-        text={state.username.text}
-        configured={state.usernameConfigured}
-        stateLabel={state.usernameConfigured ? t('socUsernameSet') : t('socUsernameUnset')}
-        onEdit={(text) => { props.edit('username', text) }}
-      />
-      <SecretField
-        id="plugin-config-soc-password"
-        label={t('socPassword')}
-        hint={t('socPasswordHint')}
-        disabled={!state.passwordWritable}
-        text={state.password.text}
-        configured={state.passwordConfigured}
-        stateLabel={state.passwordConfigured ? t('socPasswordSet') : t('socPasswordUnset')}
-        onEdit={(text) => { props.edit('password', text) }}
-      />
-      {/* The deployment's own addresses. A build ships none, so whoever installs
-          it points the tools at their systems here. */}
-      {ENDPOINT_FIELDS.map((field) => {
-        const endpoint = state.endpoints[field]
+      {fields.map(({ field }) => {
+        const control = state.fields[field]
+        if (control === undefined) return null
         return (
           <SecretField
             key={field}
             id={`plugin-config-soc-${field}`}
             label={t(`soc_${field}` as never)}
             hint={t(`soc_${field}Hint` as never)}
-            disabled={!endpoint.writable}
-            text={endpoint.text}
-            configured={endpoint.configured}
-            stateLabel={endpoint.configured ? t('socValueSet') : t('socValueUnset')}
-            onEdit={(text) => { props.edit(field, text) }}
-          />
-        )
-      })}
-      {/* The Threat Intelligence platform is a separate account. */}
-      {VTI_FIELDS.map((field) => {
-        const account = state.vti[field]
-        return (
-          <SecretField
-            key={field}
-            id={`plugin-config-soc-${field}`}
-            label={t(`soc_${field}` as never)}
-            hint={t(`soc_${field}Hint` as never)}
-            disabled={!account.writable}
-            text={account.text}
-            configured={account.configured}
-            stateLabel={account.configured ? t('socValueSet') : t('socValueUnset')}
+            // Its own writability disables the control — a value sourced from
+            // the process environment cannot be written from here.
+            disabled={!control.writable}
+            text={control.text}
+            configured={control.configured}
+            stateLabel={control.configured ? t('socValueSet') : t('socValueUnset')}
             onEdit={(text) => { props.edit(field, text) }}
           />
         )
       })}
     </PluginCard>
   )
+}
+
+/**
+ * The SOC platform card: the domain every system is derived from, the tenant,
+ * and the sign-in the SOC tools use.
+ * @param props - locale copy, the card snapshot, and its form actions.
+ * @returns the card.
+ */
+export function SocCredentialsCard(props: SocCredentialsCardProps) {
+  return renderCard(props, 'socTitle', 'socDescription', SOC_FIELDS)
+}
+
+/**
+ * The Threat Intelligence card: a separate platform, so a separate account and
+ * a card of its own.
+ * @param props - locale copy, the card snapshot, and its form actions.
+ * @returns the card.
+ */
+export function SocThreatIntelCard(props: SocCredentialsCardProps) {
+  return renderCard(props, 'tiTitle', 'tiDescription', TI_FIELDS)
 }

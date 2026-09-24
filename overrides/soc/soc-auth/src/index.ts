@@ -32,6 +32,15 @@ export const name = 'soc-auth'
  * to appear at all.
  */
 export const SOC_CREDENTIALS_NS = 'soc-credentials'
+
+/**
+ * The settings namespace the Threat Intelligence card is keyed to. That
+ * platform is a separate account on a separate host, so it gets a card of its
+ * own rather than a second half of the SOC one. Published here, from the Host,
+ * for the same reason the SOC section is: the plugin that uses it runs only
+ * inside a session, and the card has to exist before the first sign-in.
+ */
+export const SOC_TI_NS = 'soc-threat-intel'
 /**
  * The settings section behind the SOC Cloud card. The username and password are
  * NOT here — they go through the credentials domain, so their literals never
@@ -40,8 +49,12 @@ export const SOC_CREDENTIALS_NS = 'soc-credentials'
  */
 const SocCredentialsSection = z.object({
   socDomain: z.string().default(''),
-  clientId: z.string().default(''),
   tenant: z.string().default(''),
+})
+
+/** The settings section behind the Threat Intelligence card. */
+const SocThreatIntelSection = z.object({
+  vtiDomain: z.string().default(''),
 })
 
 /**
@@ -57,7 +70,6 @@ const SocCredentialsSection = z.object({
  */
 export const SOC_ENDPOINT_FIELDS = [
   'socDomain',
-  'clientId',
   'tenant',
 ] as const
 
@@ -89,6 +101,12 @@ export interface Config {
    * derived from it; the per-system fields below only pin an exception.
    */
   socDomain?: string | undefined
+  /**
+   * The OAuth client the platform registered for its portal. IAM identifies the
+   * application by it and refuses an authorize without one. It is fixed per
+   * platform and nobody changes it per user, so it is configured in
+   * `soc-endpoints.json` or the preset row rather than on a settings card.
+   */
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
   iamUrl?: string | undefined
   clientId?: string | undefined
@@ -218,8 +236,13 @@ function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       socDomain: '',
-      clientId: '',
       tenant: '',
+    }, {
+      setSource: () => {},
+      onChange: () => {},
+    })
+    settingsCtx.settings.installSection(ctx, SOC_TI_NS, SocThreatIntelSection, {
+      vtiDomain: '',
     }, {
       setSource: () => {},
       onChange: () => {},
