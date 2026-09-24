@@ -168,6 +168,24 @@ giới hạn vào một tenant con.
 Nếu một hệ nằm ngoài quy ước subdomain, ghi đè riêng hệ đó bằng `iamUrl`, `redirectUri`,
 `soarBaseUrl`, `edrBaseUrl`, `siemBaseUrl` hoặc `nsmBaseUrl` trong cùng file.
 
+### Xoá sạch cấu hình để test
+
+Muốn thử lại đúng cảnh máy mới cài, chạy:
+
+```bash
+python3 scripts/reset-soc-config.py
+```
+
+Script xoá tài khoản SOC, tài khoản Threat Intelligence, hai mục cấu hình trong
+`settings.yaml` và file `soc-endpoints.json`. Các khoá khác trong kho, ví dụ khoá API
+của model, được giữ nguyên. Mọi thứ bị xoá đều được sao lưu trước vào
+`~/.dsh/soc-reset-backup-<thời điểm>`.
+
+- `--dry-run` chỉ liệt kê những gì sẽ xoá.
+- `--restore` đưa bản sao lưu gần nhất trở lại.
+
+Thoát app trước khi chạy, vì app giữ các file này và ghi đè lúc đóng.
+
 Tên hiển thị của preset mặc định là `SOC Cloud`. Đặt `DSH_SOC_PRESET_LABEL` lúc build
 để đổi.
 
