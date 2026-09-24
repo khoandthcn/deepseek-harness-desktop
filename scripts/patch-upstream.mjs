@@ -242,11 +242,24 @@ const socSettingsOverlay = readFileSync(join(root, overlay), 'utf8')
 if (socSettingsOverlay.includes('settingsOnly: true')) {
   console.log(`already patched: ${overlay} (SOC settings card)`)
 } else {
+  // An `insert:` block, not a bare row: this file is a patch list, where a row
+  // with an `id` targets an existing entry and is warned about when there is
+  // none. A new plugin has to be inserted.
   writeFileSync(
     join(root, overlay),
-    `${socSettingsOverlay.trimEnd()}\n\n# deepseek-harness-desktop: the SOC Cloud card in Settings, before any session.\n- id: soc-settings\n  name: '@deepseek-ai/dsh-soc-auth'\n  config:\n    settingsOnly: true\n`,
+    `${socSettingsOverlay.trimEnd()}\n\n# deepseek-harness-desktop: the SOC Cloud card in Settings, before any session.\n- insert:\n    - id: soc-settings\n      name: '@deepseek-ai/dsh-soc-auth'\n      config:\n        settingsOnly: true\n`,
   )
   console.log(`patched: ${overlay} (SOC settings card)`)
+}
+// Guard the shape, because getting it wrong fails silently: the Loader warns
+// about a patch whose target row is absent and carries on, so the card would
+// just never appear.
+const socRowInsert = /- insert:\n(?:[ \t]+.*\n|\n)*?[ \t]+- id: soc-settings\n/
+if (!socRowInsert.test(readFileSync(join(root, overlay), 'utf8'))) {
+  throw new Error(
+    `patch-upstream: the soc-settings row in ${overlay} must sit inside an \`insert:\` block; `
+    + 'a bare id-targeted row patches an entry that does not exist and is only warned about.',
+  )
 }
 
 // ── 4. per-build family version ──────────────────────────────────────────────
