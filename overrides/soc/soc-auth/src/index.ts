@@ -49,7 +49,6 @@ export const SOC_TI_NS = 'soc-threat-intel'
  */
 const SocCredentialsSection = z.object({
   socDomain: z.string().default(''),
-  tenant: z.string().default(''),
 })
 
 /** The settings section behind the Threat Intelligence card. */
@@ -70,7 +69,6 @@ const SocThreatIntelSection = z.object({
  */
 export const SOC_ENDPOINT_FIELDS = [
   'socDomain',
-  'tenant',
 ] as const
 
 /**
@@ -113,7 +111,11 @@ export interface Config {
   redirectUri?: string | undefined
   /** Base URL of the SOAR API, e.g. `https://soar.example`. */
   soarBaseUrl?: string | undefined
-  /** SOAR tenant; defaults to `MASTER`. */
+  /**
+   * Tenant the SOAR tools query. Defaults to `MASTER`, the account's own
+   * top-level tenant, which already covers every tenant below it that the
+   * account may see; a deployment scoped to one sub-tenant names it here.
+   */
   tenant?: string | undefined
   /** SOAR OAuth client id used by its authorize; defaults to `clientId`. */
   soarClientId?: string | undefined
@@ -236,7 +238,6 @@ function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       socDomain: '',
-      tenant: '',
     }, {
       setSource: () => {},
       onChange: () => {},

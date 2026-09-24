@@ -140,8 +140,8 @@ thay vì tạo ra bản build hỏng.
 
 Bản cài không chứa địa chỉ hệ thống nào. Settings, mục Plugins có hai thẻ:
 
-**SOC Cloud** — tên miền nền tảng, tenant, tài khoản và mật khẩu. Các hệ IAM, SOAR,
-EDR, SIEM, NSM đều nằm ở subdomain của tên miền đó nên được suy ra. OTP hỏi lúc chạy.
+**SOC Cloud** — tên miền nền tảng, tài khoản và mật khẩu. Các hệ IAM, SOAR, EDR,
+SIEM, NSM đều nằm ở subdomain của tên miền đó nên được suy ra. OTP hỏi lúc chạy.
 
 **Threat Intelligence** — tên miền nền tảng (để trống là `ti.example`), email tài
 khoản và API key. Đây là nền tảng riêng với tài khoản riêng.
@@ -161,7 +161,9 @@ file, rồi biến môi trường, rồi ô trong Settings, cuối cùng là `co
 
 `clientId` là mã OAuth mà hệ đăng nhập tập trung dùng để nhận ra ứng dụng cổng SOC.
 Nó cố định theo nền tảng và người dùng không đổi, nên chỉ khai ở file hoặc preset,
-không đưa lên giao diện.
+không đưa lên giao diện. `tenant` cũng vậy: mặc định là `MASTER`, tức tenant gốc của
+tài khoản, vốn đã bao mọi tenant con mà tài khoản được phép xem. Chỉ khai khi muốn
+giới hạn vào một tenant con.
 
 Nếu một hệ nằm ngoài quy ước subdomain, ghi đè riêng hệ đó bằng `iamUrl`, `redirectUri`,
 `soarBaseUrl`, `edrBaseUrl`, `siemBaseUrl` hoặc `nsmBaseUrl` trong cùng file.

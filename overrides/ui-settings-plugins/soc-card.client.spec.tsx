@@ -68,7 +68,7 @@ function expand(title: string) {
 afterEach(() => { cleanup() })
 
 describe('the SOC platform card', () => {
-  it('renders the platform domain, the tenant and the sign-in', () => {
+  it('renders the platform domain and the sign-in', () => {
     renderCard(SocCredentialsCard, SOC_FIELDS)
     expand(en.socTitle)
     for (const { field } of SOC_FIELDS) {
@@ -76,10 +76,12 @@ describe('the SOC platform card', () => {
     }
   })
 
-  it('carries no portal client id: that is fixed per platform and lives in the endpoints file', () => {
+  it('carries neither the client id nor the tenant: neither is a per-user choice', () => {
     renderCard(SocCredentialsCard, SOC_FIELDS)
     expand(en.socTitle)
-    expect(SOC_FIELDS.map(entry => entry.field)).not.toContain('clientId')
+    const fields = SOC_FIELDS.map(entry => entry.field)
+    expect(fields).not.toContain('clientId')
+    expect(fields).not.toContain('tenant')
     expect(screen.queryByLabelText(/client id/i)).toBeNull()
   })
 

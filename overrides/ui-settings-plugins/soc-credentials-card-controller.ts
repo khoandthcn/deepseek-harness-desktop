@@ -46,15 +46,16 @@ export interface CardCredentialField {
 
 /**
  * The SOC card's controls: the platform domain every system's URL is derived
- * from, the tenant its SOAR tools query, and the sign-in itself.
+ * from, and the sign-in itself.
  *
- * The portal's OAuth client id is deliberately absent. IAM needs one to accept
- * an authorize, but it is fixed per platform and no user ever changes it, so it
- * belongs in `soc-endpoints.json` or the preset row, not on a card.
+ * Two settings are deliberately absent, because neither is a per-user choice.
+ * The portal's OAuth client id is fixed per platform. The tenant defaults to
+ * the account's own top-level one, which already sees every tenant below it
+ * that the account may see. A deployment that needs another value sets it in
+ * `soc-endpoints.json` or in its preset row.
  */
 export const SOC_FIELDS: readonly CardCredentialField[] = [
   { field: 'socDomain', ref: 'SOC_DOMAIN' },
-  { field: 'tenant', ref: 'SOC_TENANT' },
   { field: 'socUsername', ref: 'SOC_USERNAME' },
   { field: 'socPassword', ref: 'SOC_PASSWORD' },
 ]
