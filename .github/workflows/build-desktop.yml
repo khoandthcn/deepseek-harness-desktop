@@ -91,9 +91,11 @@ jobs:
 
       # Not frozen: the patch declares the SOC workspace packages on apps/cli,
       # which the upstream lockfile cannot know about (workspace links only).
+      # The flag is explicit because pnpm turns frozen-lockfile ON by itself in
+      # CI, so a bare `pnpm install` fails here while it works on a laptop.
       - name: Install
         working-directory: upstream
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Package
         working-directory: upstream
