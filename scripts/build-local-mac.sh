@@ -8,8 +8,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REF="${1:-dsh-v0.1.5-rc.1}"
-WORK=.work/upstream
+# The bundler labels CSS regions with the absolute path of their source, so the
+# checkout's location travels inside every client package. A build meant for
+# other people should therefore live somewhere that names nobody:
+#   DSH_SOC_WORK=/tmp/dsh-build/upstream ./scripts/build-local-mac.sh
+WORK="${DSH_SOC_WORK:-.work/upstream}"
 
+mkdir -p "$(dirname "$WORK")"
 if [ ! -d "$WORK/.git" ]; then
   git clone --depth 1 --branch "$REF" https://github.com/deepseek-ai/deepseek-harness.git "$WORK"
 fi

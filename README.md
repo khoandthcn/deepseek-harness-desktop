@@ -113,6 +113,14 @@ kèm sẵn Node.js, pnpm và toàn bộ dsh (cài offline ở lần mở đầu)
 Cần Node.js ≥ 22.19 và `corepack` (đi kèm Node). Kết quả nằm trong
 `.work/upstream/apps/desktop/.desktop-build/targets/mac-<arch>/artifacts/`.
 
+Bộ đóng gói nhúng đường dẫn tuyệt đối của mã nguồn vào nhãn vùng CSS, nên đường dẫn
+checkout đi theo vào từng gói giao diện. Bản định phát cho người khác nên build ở chỗ
+không nêu tên ai:
+
+```bash
+DSH_SOC_WORK=/tmp/dsh-build/upstream ./scripts/build-local-mac.sh
+```
+
 Mỗi lần build, version được đóng dấu khác nhau nên ứng dụng tự nhận ra bản mới và cài lại
 profile ở lần mở đầu (không cần xoá `~/.dsh/profiles/desktop` tay). Tài khoản và cấu hình
 nằm ngoài profile nên được giữ nguyên.
