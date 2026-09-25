@@ -143,8 +143,8 @@ Bản cài không chứa địa chỉ hệ thống nào. Settings, mục Plugins
 **SOC Cloud** — tên miền nền tảng, tài khoản và mật khẩu. Các hệ IAM, SOAR, EDR,
 SIEM, NSM đều nằm ở subdomain của tên miền đó nên được suy ra. OTP hỏi lúc chạy.
 
-**Threat Intelligence** — tên miền nền tảng (để trống là `ti.example`), email tài
-khoản và API key. Đây là nền tảng riêng với tài khoản riêng.
+**Threat Intelligence** — tên miền nền tảng, email tài khoản và API key. Đây là nền
+tảng riêng với tài khoản riêng, không dùng chung phiên đăng nhập với SOC.
 
 Muốn phát cho nhiều máy thì dùng file `~/.dsh/soc-endpoints.json`:
 

@@ -9,7 +9,7 @@
 //   - `tool-soc-edr` registers the read-only EDR tools (reusing the same session)
 //   - `tool-soc-siem` registers the read-only SIEM tools (same session)
 //   - `tool-soc-nsm` registers the read-only NSM/NDR tools (same session)
-//   - `tool-soc-vti` registers the read-only Threat Intelligence tools (own account)
+//   - `tool-soc-ti` registers the read-only Threat Intelligence tools (own account)
 // The append point is the end of the upstream composition, so this generator
 // fails loud only when the generated `standard-brave` preset itself is gone.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -77,8 +77,8 @@ export const socRows = () => [
   '    - id: tool-soc-nsm',
   "      name: '@deepseek-ai/dsh-tool-soc-nsm'",
   '',
-  '    - id: tool-soc-vti',
-  "      name: '@deepseek-ai/dsh-tool-soc-vti'",
+  '    - id: tool-soc-ti',
+  "      name: '@deepseek-ai/dsh-tool-soc-ti'",
   '',
 ]
 

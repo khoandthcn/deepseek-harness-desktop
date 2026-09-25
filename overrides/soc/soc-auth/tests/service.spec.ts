@@ -175,12 +175,12 @@ describe('SocAuthService.soarBearer', () => {
 
   it('honours tenant and soarClientId overrides', async () => {
     const f = stubFetch([json(200, { access_token: 'SOAR-T', expires_in: 3600 })])
-    const svc = makeService(f, () => 1_000_000, { tenant: 'VCS', soarClientId: 'OTHER' })
+    const svc = makeService(f, () => 1_000_000, { tenant: 'OTHER_TENANT', soarClientId: 'OTHER' })
     await svc.login(OTP)
     await svc.soarBearer(SCOPE)
 
     const init = (accessCalls(f)[0] as [string, any])[1]
-    expect(JSON.parse(init.body)).toEqual({ tenant: 'VCS', client_id: 'OTHER', scopes: SCOPE })
+    expect(JSON.parse(init.body)).toEqual({ tenant: 'OTHER_TENANT', client_id: 'OTHER', scopes: SCOPE })
   })
 
   it('re-exchanges once the clock passes expires_in minus the 60s skew', async () => {

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-soc-vti",
+  "name": "@deepseek-ai/dsh-tool-soc-ti",
   "version": "0.0.0",
   "type": "module",
   "main": "lib/index.js",

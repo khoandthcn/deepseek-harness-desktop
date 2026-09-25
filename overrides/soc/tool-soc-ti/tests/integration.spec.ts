@@ -1,5 +1,5 @@
 /**
- * Drives the REAL plugin body: mounts `tool-soc-vti` on a real `ToolRuntime`
+ * Drives the REAL plugin body: mounts `tool-soc-ti` on a real `ToolRuntime`
  * and invokes a registered tool through `ctx.tools.execute`.
  *
  * The unit tests exercise the tool bodies directly and so cannot see the
@@ -12,7 +12,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import * as vtiTools from '../src/index.ts'
+import * as tiTools from '../src/index.ts'
 
 const signal = new AbortController().signal
 
@@ -22,16 +22,16 @@ async function setup(): Promise<Context> {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   // Exactly as the preset mounts it: a row with no `config:` block.
-  await ctx.plugin(vtiTools)
+  await ctx.plugin(tiTools)
   return ctx
 }
 
-describe('tool-soc-vti wiring', () => {
+describe('tool-soc-ti wiring', () => {
   it('registers the Threat Intelligence tools and no login tool', async () => {
     const ctx = await setup()
-    expect(ctx.tools.get('vti_lookup_indicator')).toBeDefined()
-    expect(ctx.tools.get('vti_search_compromised_systems')).toBeDefined()
-    // VTI has its own account: it neither needs nor provides the SOC session
+    expect(ctx.tools.get('ti_lookup_indicator')).toBeDefined()
+    expect(ctx.tools.get('ti_search_compromised_systems')).toBeDefined()
+    // TI has its own account: it neither needs nor provides the SOC session
     expect(ctx.tools.get('soc_login')).toBeUndefined()
   })
 
@@ -40,7 +40,7 @@ describe('tool-soc-vti wiring', () => {
     const result = await ctx.tools.execute({
       signal,
       callId: ToolCallId('call-1'),
-      name: 'vti_search_phishing',
+      name: 'ti_search_phishing',
       arguments: {},
     })
     expect(JSON.stringify(result)).toContain('not_configured')

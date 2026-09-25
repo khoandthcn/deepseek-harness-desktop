@@ -62,9 +62,9 @@ export const SOC_FIELDS: readonly CardCredentialField[] = [
 
 /** The Threat Intelligence card's controls: its host and its account. */
 export const TI_FIELDS: readonly CardCredentialField[] = [
-  { field: 'vtiDomain', ref: 'VTI_DOMAIN' },
-  { field: 'vtiUsername', ref: 'VTI_USERNAME' },
-  { field: 'vtiApiKey', ref: 'VTI_API_KEY' },
+  { field: 'tiDomain', ref: 'TI_DOMAIN' },
+  { field: 'tiUsername', ref: 'TI_USERNAME' },
+  { field: 'tiApiKey', ref: 'TI_API_KEY' },
 ]
 
 /** What the credentials domain last reported for one reference. */

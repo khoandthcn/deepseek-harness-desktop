@@ -114,8 +114,8 @@ describe('the Threat Intelligence card', () => {
   it('stages its API key under its own field', () => {
     const actions = renderCard(SocThreatIntelCard, TI_FIELDS)
     expand(en.tiTitle)
-    fireEvent.change(screen.getByLabelText(en.soc_vtiApiKey), { target: { value: 'KEY' } })
-    expect(actions.edit).toHaveBeenCalledWith('vtiApiKey', 'KEY')
+    fireEvent.change(screen.getByLabelText(en.soc_tiApiKey), { target: { value: 'KEY' } })
+    expect(actions.edit).toHaveBeenCalledWith('tiApiKey', 'KEY')
   })
 })
 

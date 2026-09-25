@@ -355,7 +355,7 @@ const SOC_PACKAGE_REFERENCES = {
   ],
   // Threat Intelligence is a separate platform with its own account, so this
   // one needs the HTTP client and the credentials seam, but not `soc-auth`.
-  'tool-soc-vti': [
+  'tool-soc-ti': [
     '../../../vendor/cosmokit',
     '../../../vendor/cordis',
     '../../core/tools',
@@ -371,7 +371,7 @@ for (const name of [
   'tool-soc-edr',
   'tool-soc-siem',
   'tool-soc-nsm',
-  'tool-soc-vti',
+  'tool-soc-ti',
 ]) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
@@ -412,7 +412,7 @@ for (const name of [
   'dsh-tool-soc-edr',
   'dsh-tool-soc-siem',
   'dsh-tool-soc-nsm',
-  'dsh-tool-soc-vti',
+  'dsh-tool-soc-ti',
 ]) {
   cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
 }
@@ -435,7 +435,7 @@ patch(
   + '      "@deepseek-ai/dsh-tool-soc-edr": ["./packages/soc/tool-soc-edr/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n'
-  + '      "@deepseek-ai/dsh-tool-soc-vti": ["./packages/soc/tool-soc-vti/src"],\n',
+  + '      "@deepseek-ai/dsh-tool-soc-ti": ["./packages/soc/tool-soc-ti/src"],\n',
 )
 patch(
   'tsconfig.host.json',
@@ -447,7 +447,7 @@ patch(
   + '    { "path": "./packages/soc/tool-soc-edr" },\n'
   + '    { "path": "./packages/soc/tool-soc-siem" },\n'
   + '    { "path": "./packages/soc/tool-soc-nsm" },\n'
-  + '    { "path": "./packages/soc/tool-soc-vti" },\n',
+  + '    { "path": "./packages/soc/tool-soc-ti" },\n',
 )
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
@@ -548,12 +548,12 @@ patch(
   + "  | 'soc_socUsernameHint'\n"
   + "  | 'soc_socPassword'\n"
   + "  | 'soc_socPasswordHint'\n"
-  + "  | 'soc_vtiDomain'\n"
-  + "  | 'soc_vtiDomainHint'\n"
-  + "  | 'soc_vtiUsername'\n"
-  + "  | 'soc_vtiUsernameHint'\n"
-  + "  | 'soc_vtiApiKey'\n"
-  + "  | 'soc_vtiApiKeyHint'\n",
+  + "  | 'soc_tiDomain'\n"
+  + "  | 'soc_tiDomainHint'\n"
+  + "  | 'soc_tiUsername'\n"
+  + "  | 'soc_tiUsernameHint'\n"
+  + "  | 'soc_tiApiKey'\n"
+  + "  | 'soc_tiApiKeyHint'\n",
 )
 patch(
   PLUGINS_LOCALES,
@@ -571,12 +571,12 @@ patch(
   + "  soc_socUsernameHint: 'Stored outside the settings file. Leave blank to keep the current username.',\n"
   + "  soc_socPassword: 'Password',\n"
   + "  soc_socPasswordHint: 'Stored outside the settings file. The one-time code is asked for at sign-in.',\n"
-  + "  soc_vtiDomain: 'Platform domain',\n"
-  + "  soc_vtiDomainHint: 'Leave blank for the vendor platform (ti.example); its API is api.<domain>.',\n"
-  + "  soc_vtiUsername: 'Account email',\n"
-  + "  soc_vtiUsernameHint: 'The email you sign in to the Threat Intelligence platform with.',\n"
-  + "  soc_vtiApiKey: 'API key',\n"
-  + "  soc_vtiApiKeyHint: 'From that platform\\'s account page. Leave blank to keep the current key.',\n"
+  + "  soc_tiDomain: 'Platform domain',\n"
+  + "  soc_tiDomainHint: 'The Threat Intelligence platform domain; its API is api.<domain>.',\n"
+  + "  soc_tiUsername: 'Account email',\n"
+  + "  soc_tiUsernameHint: 'The email you sign in to the Threat Intelligence platform with.',\n"
+  + "  soc_tiApiKey: 'API key',\n"
+  + "  soc_tiApiKeyHint: 'From that platform\\'s account page. Leave blank to keep the current key.',\n"
   + "}",
 )
 patch(
@@ -595,12 +595,12 @@ patch(
   + "  soc_socUsernameHint: '不写入设置文件。留空表示保持当前用户名。',\n"
   + "  soc_socPassword: '密码',\n"
   + "  soc_socPasswordHint: '不写入设置文件；一次性验证码在登录时询问。',\n"
-  + "  soc_vtiDomain: '平台域名',\n"
-  + "  soc_vtiDomainHint: '留空表示厂商平台 ti.example；其 API 为 api.<域名>。',\n"
-  + "  soc_vtiUsername: '账号邮箱',\n"
-  + "  soc_vtiUsernameHint: '登录威胁情报平台使用的邮箱。',\n"
-  + "  soc_vtiApiKey: 'API 密钥',\n"
-  + "  soc_vtiApiKeyHint: '在平台账号页获取。留空表示保持当前密钥。',\n"
+  + "  soc_tiDomain: '平台域名',\n"
+  + "  soc_tiDomainHint: '威胁情报平台域名；其 API 为 api.<域名>。',\n"
+  + "  soc_tiUsername: '账号邮箱',\n"
+  + "  soc_tiUsernameHint: '登录威胁情报平台使用的邮箱。',\n"
+  + "  soc_tiApiKey: 'API 密钥',\n"
+  + "  soc_tiApiKeyHint: '在平台账号页获取。留空表示保持当前密钥。',\n"
   + "}",
 )
 

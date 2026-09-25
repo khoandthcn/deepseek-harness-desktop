@@ -1,5 +1,5 @@
 /**
- * Model-facing Threat Intelligence (VTI) tool definitions.
+ * Model-facing Threat Intelligence tool definitions.
  *
  * Mirrors the other SOC slices, and is likewise **dependency-free**: it imports
  * nothing from `@deepseek-ai/*`, so the whole tool surface is unit-testable
@@ -10,7 +10,7 @@
  * guide (version 1.8.1). The slice is **read-only**: it searches the customer's
  * alerts and looks indicators up, and never marks, exports or edits anything.
  *
- * Unlike the other slices, VTI is not reached through the SOC session: it is a
+ * Unlike the other slices, TI is not reached through the SOC session: it is a
  * separate platform with its own account, authenticated with HTTP Basic (the
  * account email and an API key), so this slice carries its own credentials and
  * needs no `soc_login`.
@@ -23,12 +23,12 @@
  * account may have to ask the credentials store, and a tool that guessed while
  * that was in flight would report "not configured" for a configured account.
  */
-export interface VtiAuthLike {
+export interface TiAuthLike {
   ensureConfigured(): Promise<boolean>
 }
 
 /** The slice of soc-client's `SocHttp` these tools need. */
-export interface VtiHttpLike {
+export interface TiHttpLike {
   getJson<T = unknown>(path: string): Promise<T>
   postJson<T = unknown>(path: string, body: unknown): Promise<T>
 }
@@ -48,7 +48,7 @@ export interface ToolParamSpec {
 }
 
 /** A plain tool definition, shaped for `defineTool` but independent of it. */
-export interface VtiToolDef {
+export interface TiToolDef {
   name: string
   description: string
   parameters: Record<string, ToolParamSpec>
@@ -59,26 +59,27 @@ export interface VtiToolDef {
   execute: (args: Record<string, any>, exec?: unknown) => Promise<unknown>
 }
 
-export interface CreateVtiToolDefsOptions {
-  http: VtiHttpLike
-  auth: VtiAuthLike
+export interface CreateTiToolDefsOptions {
+  http: TiHttpLike
+  auth: TiAuthLike
   /** Clock seam, so the default time window is testable. Defaults to `Date.now`. */
   now?: (() => number) | undefined
 }
 
 /**
- * Returned instead of throwing when no VTI account is configured, so the model
+ * Returned instead of throwing when no TI account is configured, so the model
  * reads a value it can act on rather than an error trace.
  */
 export const NOT_CONFIGURED = {
   error: 'not_configured',
   message:
-    'No Threat Intelligence account is configured. Ask the user to fill in the VTI account email and '
-    + 'API key under Settings → Plugins → SOC Cloud; the key comes from the platform\'s account page.',
+    'Threat Intelligence is not configured. Ask the user to fill in the platform domain, the account '
+    + 'email and the API key under Settings → Plugins → Threat Intelligence; the key comes from that '
+    + 'platform\'s own account page.',
 } as const
 
-/** VTI API paths, from the vendor's API guide. */
-export const VTI_PATHS = {
+/** TI API paths, from the vendor's API guide. */
+export const TI_PATHS = {
   compromisedSystem: '/discovery-service/api/v1/compromised_system',
   portAnomaly: '/discovery-service/api/v1/port_anomaly',
   threatReport: '/discovery-service/api/v1/threat_report',
@@ -94,26 +95,26 @@ export const VTI_PATHS = {
 } as const
 
 /** The detail endpoints, which take an id in the path. */
-export const VTI_DETAIL_PATHS = {
+export const TI_DETAIL_PATHS = {
   threatReport: (code: string) => `/discovery-service/api/v1/threat_report/${encodeURIComponent(code)}`,
   dataBreach: (code: string) => `/discovery-service/api/v1/data_breach/${encodeURIComponent(code)}`,
   ccleak: (id: string) => `/discovery-service/api/v1/ccleak/${encodeURIComponent(id)}`,
 } as const
 
 /** Page sizes the API accepts: 20 by default, 100 at most. */
-export const VTI_DEFAULT_SIZE = 20
-export const VTI_MAX_SIZE = 100
+export const TI_DEFAULT_SIZE = 20
+export const TI_MAX_SIZE = 100
 /** Default window when the caller gives no time range: 30 days. */
-export const VTI_DEFAULT_WINDOW_SECONDS = 30 * 24 * 3600
+export const TI_DEFAULT_WINDOW_SECONDS = 30 * 24 * 3600
 
 /** Severity as the platform numbers it, for the tool descriptions. */
-export const VTI_SEVERITY = '4 critical, 3 high, 2 medium, 1 low, 0 unknown'
+export const TI_SEVERITY = '4 critical, 3 high, 2 medium, 1 low, 0 unknown'
 
-/** Raised when a VTI payload does not match the documented shape. */
-export class VtiContractError extends Error {
+/** Raised when a TI payload does not match the documented shape. */
+export class TiContractError extends Error {
   constructor(message: string) {
     super(message)
-    this.name = 'VtiContractError'
+    this.name = 'TiContractError'
   }
 }
 
@@ -123,7 +124,7 @@ function describe(data: unknown): string {
 }
 
 /** The window a search covers, in epoch milliseconds. */
-export interface VtiWindow {
+export interface TiWindow {
   from: number
   to: number
 }
@@ -135,19 +136,19 @@ export interface VtiWindow {
  * @param args - the tool arguments.
  * @param now - current epoch milliseconds.
  */
-export function resolveWindow(args: Record<string, any>, now: number): VtiWindow {
+export function resolveWindow(args: Record<string, any>, now: number): TiWindow {
   const to = typeof args.time_to === 'number' ? args.time_to : now
   if (typeof args.time_from === 'number') return { from: args.time_from, to }
   const seconds = typeof args.last_seconds === 'number' && args.last_seconds > 0
     ? args.last_seconds
-    : VTI_DEFAULT_WINDOW_SECONDS
+    : TI_DEFAULT_WINDOW_SECONDS
   return { from: to - seconds * 1000, to }
 }
 
 /** Clamp a requested page size into what the API accepts. */
 export function resolveSize(size: unknown): number {
-  if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0) return VTI_DEFAULT_SIZE
-  return Math.min(Math.floor(size), VTI_MAX_SIZE)
+  if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0) return TI_DEFAULT_SIZE
+  return Math.min(Math.floor(size), TI_MAX_SIZE)
 }
 
 /** The offset into a result set, for paging. */
@@ -165,7 +166,7 @@ export function resolveSeverity(severity: unknown): number[] | undefined {
 }
 
 /** A parsed search: the rows and the total the platform reports. */
-export interface VtiSearchResult {
+export interface TiSearchResult {
   total: number
   returned: number
   rows: unknown[]
@@ -177,14 +178,14 @@ export interface VtiSearchResult {
  * @param payload - the raw upstream JSON.
  * @param what - what was searched, named in the error.
  */
-export function parseVtiSearch(payload: unknown, what: string): VtiSearchResult {
+export function parseTiSearch(payload: unknown, what: string): TiSearchResult {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new VtiContractError(`Expected a VTI ${what} object, got ${describe(payload)}`)
+    throw new TiContractError(`Expected a TI ${what} object, got ${describe(payload)}`)
   }
   const obj = payload as Record<string, unknown>
   const rows = obj.data ?? obj.alerts
   if (!Array.isArray(rows)) {
-    throw new VtiContractError(`VTI ${what} returned no \`data\` array (keys: ${Object.keys(obj).join(', ')})`)
+    throw new TiContractError(`TI ${what} returned no \`data\` array (keys: ${Object.keys(obj).join(', ')})`)
   }
   const total = typeof obj.total === 'number' ? obj.total : rows.length
   return { total, returned: rows.length, rows }
@@ -194,13 +195,13 @@ export function parseVtiSearch(payload: unknown, what: string): VtiSearchResult 
  * Parse an indicator lookup, whose answer is `{ success, message, detail }`.
  * @param payload - the raw upstream JSON.
  */
-export function parseVtiLookup(payload: unknown): { value: unknown } {
+export function parseTiLookup(payload: unknown): { value: unknown } {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new VtiContractError(`Expected a VTI lookup object, got ${describe(payload)}`)
+    throw new TiContractError(`Expected a TI lookup object, got ${describe(payload)}`)
   }
   const obj = payload as Record<string, unknown>
   if (obj.detail === undefined) {
-    throw new VtiContractError(`VTI lookup returned no \`detail\` (keys: ${Object.keys(obj).join(', ')})`)
+    throw new TiContractError(`TI lookup returned no \`detail\` (keys: ${Object.keys(obj).join(', ')})`)
   }
   return { value: obj.detail }
 }
@@ -222,22 +223,22 @@ const SEARCH_PARAMS: Record<string, ToolParamSpec> = {
   severity: {
     type: 'array',
     items: { type: 'integer' },
-    description: `Severities to include (${VTI_SEVERITY}). Omit for every severity.`,
+    description: `Severities to include (${TI_SEVERITY}). Omit for every severity.`,
   },
   last_seconds: { type: 'integer', description: 'Window length back from now, in seconds (default 30 days).' },
   time_from: { type: 'integer', description: 'Window start, epoch milliseconds. Overrides last_seconds.' },
   time_to: { type: 'integer', description: 'Window end, epoch milliseconds. Defaults to now.' },
-  size: { type: 'integer', description: `Rows to return, 1-${VTI_MAX_SIZE} (default ${VTI_DEFAULT_SIZE}).` },
+  size: { type: 'integer', description: `Rows to return, 1-${TI_MAX_SIZE} (default ${TI_DEFAULT_SIZE}).` },
   from: { type: 'integer', description: 'Offset into the result set, for paging (default 0).' },
 }
 
 /**
- * Build the VTI tool definitions: one search per alert family, the indicator
+ * Build the TI tool definitions: one search per alert family, the indicator
  * lookup, and the detail reads for the reports that have one.
  * @param options - the HTTP client, the credential check and the clock seam.
  * @returns plain definitions, ready for `defineTool`.
  */
-export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions): VtiToolDef[] {
+export function createTiToolDefs({ http, auth, now }: CreateTiToolDefsOptions): TiToolDef[] {
   const clock = now ?? (() => Date.now())
 
   /** Fail closed: with no account configured, no request is made. */
@@ -265,64 +266,64 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
   }
 
   /** One alert search, since eight of them differ only in path and wording. */
-  const search = (name: string, path: string, what: string, description: string): VtiToolDef => ({
+  const search = (name: string, path: string, what: string, description: string): TiToolDef => ({
     name,
     description,
     parameters: SEARCH_PARAMS,
     output: JSON_OUTPUT,
-    execute: guarded(async args => parseVtiSearch(await http.postJson(path, searchBody(args)), what)),
+    execute: guarded(async args => parseTiSearch(await http.postJson(path, searchBody(args)), what)),
   })
 
   return [
     search(
-      'vti_search_compromised_systems',
-      VTI_PATHS.compromisedSystem,
+      'ti_search_compromised_systems',
+      TI_PATHS.compromisedSystem,
       'compromised system',
       'Search Threat Intelligence alerts about the organisation\'s own hosts talking to known malware'
       + ' infrastructure. Each alert names the internal IP address, the indicator it reached and the'
       + ' malware family. Use it to find machines that are already compromised.',
     ),
     search(
-      'vti_search_port_anomalies',
-      VTI_PATHS.portAnomaly,
+      'ti_search_port_anomalies',
+      TI_PATHS.portAnomaly,
       'port anomaly',
       'Search Threat Intelligence alerts about unexpected open ports on the organisation\'s'
       + ' internet-facing addresses. Use it to find services exposed by mistake.',
     ),
     search(
-      'vti_search_data_leaks',
-      VTI_PATHS.dataLeak,
+      'ti_search_data_leaks',
+      TI_PATHS.dataLeak,
       'data leak',
       'Search Threat Intelligence alerts about the organisation\'s credentials or data appearing in'
       + ' leaks. Use it when asked what of ours has leaked, or to check one account or domain.',
     ),
     search(
-      'vti_search_impersonations',
-      VTI_PATHS.impersonate,
+      'ti_search_impersonations',
+      TI_PATHS.impersonate,
       'impersonation',
       'Search Threat Intelligence alerts about domains, accounts or apps impersonating the'
       + ' organisation. Use it for brand-abuse questions.',
     ),
     search(
-      'vti_search_phishing',
-      VTI_PATHS.phishing,
+      'ti_search_phishing',
+      TI_PATHS.phishing,
       'phishing',
       'Search Threat Intelligence alerts about phishing sites and campaigns aimed at the'
       + ' organisation or its customers.',
     ),
     search(
-      'vti_search_credit_card_leaks',
-      VTI_PATHS.ccleak,
+      'ti_search_credit_card_leaks',
+      TI_PATHS.ccleak,
       'credit-card leak',
       'Search Threat Intelligence alerts about the organisation\'s payment cards offered on criminal'
       + ' markets. Card numbers arrive masked by the platform.',
     ),
     {
-      name: 'vti_search_cves',
+      name: 'ti_search_cves',
       description:
         'Search the vulnerability feed: CVEs the platform tracks, with its own scoring and the'
         + ' affected products. Use it to check whether a CVE is known, or to list recent critical ones.'
-        + ` Severities are ${VTI_SEVERITY}.`,
+        + ` Severities are ${TI_SEVERITY}.`,
       parameters: {
         ...SEARCH_PARAMS,
         keyword: { type: 'string', description: 'CVE id or product name, e.g. "CVE-2025-49619" or "redhat".' },
@@ -341,15 +342,15 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
           ...searchBody(args),
           ...levels === undefined || levels.length === 0 ? {} : { cvss_level: levels },
         }
-        return parseVtiSearch(await http.postJson(VTI_PATHS.cve, body), 'CVE')
+        return parseTiSearch(await http.postJson(TI_PATHS.cve, body), 'CVE')
       }),
     },
     {
-      name: 'vti_search_threat_reports',
+      name: 'ti_search_threat_reports',
       description:
         'Search the platform\'s in-depth threat reports: campaigns, actors, malware families and'
         + ' intrusion write-ups. Returns each report\'s code, title and tags; read one in full with'
-        + ' vti_get_threat_report.',
+        + ' ti_get_threat_report.',
       parameters: {
         ...SEARCH_PARAMS,
         severity: { type: 'array', items: { type: 'integer' }, description: 'Severities to include.' },
@@ -365,25 +366,25 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
           ? args.tlp.map((level: unknown) => Number(level)).filter(Number.isInteger)
           : undefined
         const body = { ...searchBody(args), ...tlp === undefined || tlp.length === 0 ? {} : { tlp } }
-        return parseVtiSearch(await http.postJson(VTI_PATHS.threatReport, body), 'threat report')
+        return parseTiSearch(await http.postJson(TI_PATHS.threatReport, body), 'threat report')
       }),
     },
     {
-      name: 'vti_get_threat_report',
+      name: 'ti_get_threat_report',
       description:
-        'Read one in-depth threat report in full, by the code vti_search_threat_reports returned'
-        + ' (e.g. "VTI_2025_0123").',
+        'Read one in-depth threat report in full, by the code ti_search_threat_reports returned'
+        + ' (e.g. "TI_2025_0123").',
       parameters: {
         code_report: { type: 'string', required: true, description: 'The report code.' },
       },
       output: JSON_OUTPUT,
-      execute: guarded(async args => http.getJson(VTI_DETAIL_PATHS.threatReport(String(args.code_report ?? '')))),
+      execute: guarded(async args => http.getJson(TI_DETAIL_PATHS.threatReport(String(args.code_report ?? '')))),
     },
     {
-      name: 'vti_search_document_breaches',
+      name: 'ti_search_document_breaches',
       description:
         'Search Threat Intelligence alerts about the organisation\'s internal documents or source'
-        + ' code appearing publicly. Read one in full with vti_get_document_breach.',
+        + ' code appearing publicly. Read one in full with ti_get_document_breach.',
       parameters: {
         ...SEARCH_PARAMS,
         status: {
@@ -409,29 +410,29 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
           ...severity === undefined ? {} : { severity },
           ...status === undefined || status.length === 0 ? {} : { status },
         }
-        return parseVtiSearch(await http.postJson(VTI_PATHS.dataBreach, body), 'document breach')
+        return parseTiSearch(await http.postJson(TI_PATHS.dataBreach, body), 'document breach')
       }),
     },
     {
-      name: 'vti_get_document_breach',
-      description: 'Read one document-breach alert in full, by the code vti_search_document_breaches returned.',
+      name: 'ti_get_document_breach',
+      description: 'Read one document-breach alert in full, by the code ti_search_document_breaches returned.',
       parameters: {
         code_report: { type: 'string', required: true, description: 'The alert code.' },
       },
       output: JSON_OUTPUT,
-      execute: guarded(async args => http.getJson(VTI_DETAIL_PATHS.dataBreach(String(args.code_report ?? '')))),
+      execute: guarded(async args => http.getJson(TI_DETAIL_PATHS.dataBreach(String(args.code_report ?? '')))),
     },
     {
-      name: 'vti_get_credit_card_leak',
-      description: 'Read one payment-card leak alert in full, by the id vti_search_credit_card_leaks returned.',
+      name: 'ti_get_credit_card_leak',
+      description: 'Read one payment-card leak alert in full, by the id ti_search_credit_card_leaks returned.',
       parameters: {
         ccleak_id: { type: 'string', required: true, description: 'The alert id.' },
       },
       output: JSON_OUTPUT,
-      execute: guarded(async args => http.getJson(VTI_DETAIL_PATHS.ccleak(String(args.ccleak_id ?? '')))),
+      execute: guarded(async args => http.getJson(TI_DETAIL_PATHS.ccleak(String(args.ccleak_id ?? '')))),
     },
     {
-      name: 'vti_search_easm_assets',
+      name: 'ti_search_easm_assets',
       description:
         'Search the attack-surface inventory: the organisation\'s internet-facing assets the platform'
         + ' discovered, with their addresses, hosting and issue counts.',
@@ -447,11 +448,11 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
       },
       output: JSON_OUTPUT,
       execute: guarded(async (args) => {
-        return parseVtiSearch(await http.postJson(VTI_PATHS.easmAsset, easmBody(args, clock())), 'EASM asset')
+        return parseTiSearch(await http.postJson(TI_PATHS.easmAsset, easmBody(args, clock())), 'EASM asset')
       }),
     },
     {
-      name: 'vti_search_easm_issues',
+      name: 'ti_search_easm_issues',
       description:
         'Search the issues found on the organisation\'s internet-facing assets: the affected asset,'
         + ' what was found and when. Use it to see what is exposed and needs fixing.',
@@ -472,11 +473,11 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
           ? args.customer_status.map((value: unknown) => Number(value)).filter(Number.isInteger)
           : undefined
         if (states !== undefined && states.length > 0) body.customer_status = states
-        return parseVtiSearch(await http.postJson(VTI_PATHS.easmIssue, body), 'EASM issue')
+        return parseTiSearch(await http.postJson(TI_PATHS.easmIssue, body), 'EASM issue')
       }),
     },
     {
-      name: 'vti_lookup_indicator',
+      name: 'ti_lookup_indicator',
       description:
         'Look one indicator up in the Threat Intelligence platform: a domain, an IP address, a URL or'
         + ' a file hash. Returns the platform\'s verdict and severity, plus enrichment such as passive'
@@ -506,7 +507,7 @@ export function createVtiToolDefs({ http, auth, now }: CreateVtiToolDefsOptions)
           entity_type: String(args.entity_type ?? ''),
           sections,
         }
-        return parseVtiLookup(await http.postJson(VTI_PATHS.threatLookup, body))
+        return parseTiLookup(await http.postJson(TI_PATHS.threatLookup, body))
       }),
     },
   ]

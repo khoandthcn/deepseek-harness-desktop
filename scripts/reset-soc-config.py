@@ -55,9 +55,9 @@ SOC_REFS = (
     'SOC_SIEM_CLIENT_ID',
     'SOC_NSM_BASE_URL',
     'SOC_NSM_CLIENT_ID',
-    'VTI_DOMAIN',
-    'VTI_USERNAME',
-    'VTI_API_KEY',
+    'TI_DOMAIN',
+    'TI_USERNAME',
+    'TI_API_KEY',
 )
 
 #: Settings sections the two cards are keyed to.

@@ -53,7 +53,7 @@ const SocCredentialsSection = z.object({
 
 /** The settings section behind the Threat Intelligence card. */
 const SocThreatIntelSection = z.object({
-  vtiDomain: z.string().default(''),
+  tiDomain: z.string().default(''),
 })
 
 /**
@@ -243,7 +243,7 @@ function installSocSection(ctx: Context): void {
       onChange: () => {},
     })
     settingsCtx.settings.installSection(ctx, SOC_TI_NS, SocThreatIntelSection, {
-      vtiDomain: '',
+      tiDomain: '',
     }, {
       setSource: () => {},
       onChange: () => {},
