@@ -769,6 +769,53 @@ function makeNsmService(fetchImpl: any, now: () => number = () => 1_000_000) {
   return makeService(fetchImpl, now, { nsmBaseUrl: NSM })
 }
 
+describe('SocAuthService NSM sign-in when NSM stalls', () => {
+  it('asks for the scope NSM\'s own front end asks for', async () => {
+    const f = stubFetchNsm()
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+    await svc.nsmSession()
+    const authorize = callsOf(f).map(c => String(c[0])).find(u => u.includes('client_id=NSM'))!
+    expect(new URL(authorize).searchParams.get('scope')).toBe('openid')
+  })
+
+  it('says a 504 is NSM not finishing the sign-in, and names where to check', async () => {
+    const svc = makeNsmService(stubFetchNsm(new Response('', { status: 504 })))
+    await svc.login(OTP)
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/NSM did not finish the sign-in/)
+    expect(err.message).toContain(NSM)
+  })
+
+  it('fails the next NSM tool at once instead of waiting out the same stall', async () => {
+    let now = 1_000_000
+    const f = stubFetchNsm(new Response('', { status: 504 }))
+    const svc = makeNsmService(f, () => now)
+    await svc.login(OTP)
+    await expectNoSecrets(svc.nsmSession())
+    const signIns = () => callsOf(f).filter(c => String(c[0]).includes('/sso/login/')).length
+    expect(signIns()).toBe(1)
+    // a second tool within the pause does not try again
+    const err = await expectNoSecrets(svc.nsmSession())
+    expect(err.message).toMatch(/NSM did not finish the sign-in/)
+    expect(signIns()).toBe(1)
+    // once the pause lapses it does
+    now += 121_000
+    await expectNoSecrets(svc.nsmSession())
+    expect(signIns()).toBe(2)
+  })
+
+  it('tries again at once after the user signs in afresh', async () => {
+    const f = stubFetchNsm(new Response('', { status: 504 }), [...wso2HappyPath(), ...wso2HappyPath()])
+    const svc = makeNsmService(f)
+    await svc.login(OTP)
+    await expectNoSecrets(svc.nsmSession())
+    await svc.login(OTP)
+    await expectNoSecrets(svc.nsmSession())
+    expect(callsOf(f).filter(c => String(c[0]).includes('/sso/login/'))).toHaveLength(2)
+  })
+})
+
 describe('SocAuthService.nsmAuthHeaders', () => {
   it('rejects with a clear error before any login', async () => {
     const svc = makeNsmService(stubFetchNsm())

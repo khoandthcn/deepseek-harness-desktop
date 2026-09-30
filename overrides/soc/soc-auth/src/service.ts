@@ -75,6 +75,34 @@ export function cookiesFor(url: string, iamUrl: string, cookies: Record<string, 
   return cookies[D1N_COOKIE] === undefined ? {} : { [D1N_COOKIE]: cookies[D1N_COOKIE] }
 }
 
+/**
+ * How long the NSM sign-in may take. NSM's gateway gives up at 60s; waiting
+ * that long only to learn the same thing holds every NSM tool for a minute.
+ */
+const NSM_SIGN_IN_TIMEOUT_MS = 25_000
+
+/** How long the other NSM tools fail fast on a sign-in NSM left hanging. */
+const NSM_STALL_PAUSE_MS = 120_000
+
+/** Marks the stall message, so the pause is taken only for this failure. */
+const NSM_STALL_MARK = 'NSM did not finish the sign-in'
+
+/**
+ * Say what a hung NSM sign-in means, in terms a user can act on. The request
+ * is the one NSM's own front end sends, and NSM answers a malformed or forged
+ * token at once — so a stall only on a genuine one is NSM's back end not
+ * completing the sign-in, not this app sending the wrong thing.
+ * @param url - the sign-in endpoint.
+ * @param how - what was observed.
+ * @returns the message.
+ */
+function nsmStalledMessage(url: string, how: string): string {
+  return `SOC auth: ${NSM_STALL_MARK} (${url}: ${how}). The request matches NSM's own front end, and `
+    + 'NSM rejects a bad token immediately, so it stalls only after accepting a valid one — on its side. '
+    + `Check whether ${new URL(url).origin} signs in from a browser; other NSM tools will fail at once `
+    + 'for the next two minutes rather than each waiting out the same stall.'
+}
+
 const SIEM_LOGIN_AUDIENCE = 'cym_api'
 const SIEM_LOGIN_SCOPE = 'login'
 const SIEM_PORTAL_AUDIENCE = 'cym_portal'
@@ -241,6 +269,8 @@ export class SocAuthService {
   private nsmCred: { cookies: Record<string, string>, csrfHeader: string, csrfValue: string, exp: number } | null = null
   /** De-duplicates concurrent NSM sign-ins. */
   private nsmInflight: Promise<void> | null = null
+  /** A sign-in NSM left hanging, and until when the others fail fast on it. */
+  private nsmStall: { message: string, until: number } | null = null
   /** SIEM per-API credentials, keyed `audience/scope`, each cached until it expires. */
   private readonly siemCreds = new Map<string, { token: string, type: string, exp: number }>()
   /** De-duplicates concurrent acquisitions of one per-API token. */
@@ -452,6 +482,7 @@ export class SocAuthService {
     this.siemInflight.clear()
     this.nsmCred = null
     this.nsmInflight = null
+    this.nsmStall = null
   }
 
   /**
@@ -994,8 +1025,18 @@ export class SocAuthService {
     }
     const cached = this.nsmCred
     if (cached && this.now() < cached.exp) return
+    // A sign-in NSM just left hanging is not retried by every NSM tool in turn,
+    // each waiting out the same stall; they fail at once with the same reason
+    // until the pause lapses or the user signs in again.
+    const stalled = this.nsmStall
+    if (stalled && this.now() < stalled.until) throw new SocAuthError(stalled.message)
     if (!this.nsmInflight) {
-      this.nsmInflight = this.establishNsmSession().finally(() => {
+      this.nsmInflight = this.establishNsmSession().catch((error: unknown) => {
+        if (error instanceof SocAuthError && error.message.includes(NSM_STALL_MARK)) {
+          this.nsmStall = { message: error.message, until: this.now() + NSM_STALL_PAUSE_MS }
+        }
+        throw error
+      }).finally(() => {
         this.nsmInflight = null
       })
     }
@@ -1025,7 +1066,10 @@ export class SocAuthService {
       clientId: this.nsmClientId,
       redirectUri: this.nsmRedirectUri,
       callbackUrl: `${this.iamUrl}/authen/callback`,
-      scope: 'openid profile email read_user',
+      // What NSM's own front end asks for. The longer list this used to send
+      // is the SOC portal's, and NSM's sign-in then works on a token carrying
+      // grants NSM never requests for itself.
+      scope: 'openid',
     })
     const url = `${this.nsmBaseUrl}/api/v1/sso/login/`
     // Only what a browser would hold for this host: the WAF cookie, without
@@ -1041,8 +1085,12 @@ export class SocAuthService {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
           body: JSON.stringify({ session_token: sessionToken }),
+          signal: AbortSignal.timeout(NSM_SIGN_IN_TIMEOUT_MS),
         })
       } catch (cause) {
+        if (cause instanceof Error && (cause.name === 'TimeoutError' || cause.name === 'AbortError')) {
+          throw new SocAuthError(nsmStalledMessage(url, `no answer within ${NSM_SIGN_IN_TIMEOUT_MS / 1000}s`), { cause })
+        }
         throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) failed (network error).`, { cause })
       }
       if (!afterBootstrap && response.status === 200) {
@@ -1055,6 +1103,9 @@ export class SocAuthService {
       return response
     }
     const res = await post()
+    if (res.status === 504 || res.status === 502) {
+      throw new SocAuthError(nsmStalledMessage(url, `its gateway gave up with HTTP ${res.status}`))
+    }
     if (res.status !== 200) {
       throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) returned HTTP ${res.status}.`)
     }
