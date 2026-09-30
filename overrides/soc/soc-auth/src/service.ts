@@ -252,7 +252,14 @@ export class SocAuthService {
       redirectUri: this.redirectUri,
       soarBaseUrl: this.soarBaseUrl,
     }
-    this.endpoints = { ...supplied, missing: supplied.missing.filter(key => overridden[key] === '') }
+    // A key stays missing unless something here actually filled it. `??` is
+    // load-bearing: `socDomain` is not one of the four, so comparing its
+    // absent entry to '' dropped it from the report, and a machine with no
+    // domain sailed past this check into a request with no host at all.
+    this.endpoints = {
+      ...supplied,
+      missing: supplied.missing.filter(key => (overridden[key] ?? '') === ''),
+    }
     this.tenant = opts.tenant ?? supplied.values.tenant ?? 'MASTER'
     this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? this.clientId
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`

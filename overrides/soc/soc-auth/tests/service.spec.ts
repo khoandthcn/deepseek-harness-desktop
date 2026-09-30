@@ -459,6 +459,23 @@ describe('SocAuthService without endpoints', () => {
     expect(svc.isAuthenticated()).toBe(false)
   })
 
+  it('still reports the domain missing when nothing supplied one', async () => {
+    // Regression: the filter that drops a key some option filled compared an
+    // ABSENT entry to '', which is false, so `socDomain` — which no option can
+    // fill — fell out of the report. Login then ran with every URL empty and
+    // fetched a path with no host, surfacing as a bare network error.
+    const svc = new SocAuthService({
+      endpoints: () => ({ values: {}, missing: ['socDomain'], filePath: '/home/u/.dsh/soc-endpoints.json' }),
+      endpointOverrides: async () => ({}),
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: vi.fn(async () => { throw new Error('the network must not be touched') }) as any,
+    })
+    const err = await expectNoSecrets(svc.login(OTP))
+    expect(err.message).toMatch(/endpoints are not configured/)
+    expect(err.message).toContain('socDomain')
+    expect(svc.iamUrl).toBe('')
+  })
+
   it('names the client id when a domain alone was configured, rather than letting the platform refuse', async () => {
     // What a user of a public build hits: the domain derives every URL, so
     // nothing reports as missing, but sign-in still has no client to present.
