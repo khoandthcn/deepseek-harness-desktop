@@ -8,13 +8,68 @@
  */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { SecretField } from './fields.tsx'
+import { Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import css from './fields.module.css'
 import { PluginCard } from './PluginCard.tsx'
 import {
   SOC_FIELDS, TI_FIELDS,
   type CardCredentialField, type SocCredentialsCardFace,
 } from './soc-credentials-card-controller.ts'
 import type {} from './slot-contract.ts'
+
+/**
+ * One control on a card. Every value here is write-only — it travels to the
+ * credentials domain and never rides a response — so the control starts blank
+ * and reports whether the Host holds a value rather than showing it.
+ *
+ * Masking is a separate question from write-only: only an actual secret is
+ * masked. A platform domain and a sign-in name are configuration the user has
+ * to proof-read while typing, and hiding them turns a typo into a login
+ * failure with nothing to look at.
+ * @param props - the field's copy, its staged text, and the edit action.
+ * @returns the labelled control.
+ */
+function CredentialField(props: {
+  /** Stable id associating the label with its control. */
+  id: string
+  /** Visible label. */
+  label: string
+  /** One-line explanation rendered under the control. */
+  hint: string
+  /** Draft text this control renders. */
+  text: string
+  /** Whether the Host reports a value for this reference. */
+  configured: boolean
+  /** Copy describing the configured state. */
+  stateLabel: string
+  /** Whether what is typed is masked. */
+  masked: boolean
+  /** Disables the control — a value sourced elsewhere cannot be written here. */
+  disabled: boolean
+  /** Stage draft text. */
+  onEdit: (text: string) => void
+}) {
+  return (
+    <div className={css.field}>
+      <div className={css.head}>
+        <label className={css.label} htmlFor={props.id}>{props.label}</label>
+        <span className={css.badges}>
+          <Tag tone={props.configured ? 'neutral' : 'quiet'}>{props.stateLabel}</Tag>
+        </span>
+      </div>
+      <input
+        id={props.id}
+        className={css.input}
+        type={props.masked ? 'password' : 'text'}
+        autoComplete="off"
+        value={props.text}
+        disabled={props.disabled}
+        onChange={(event) => { props.onEdit(event.target.value) }}
+      />
+      <p className={css.hint}>{props.hint}</p>
+    </div>
+  )
+}
 
 /** Props the renderer binds for either card. */
 export type SocCredentialsCardProps =
@@ -47,11 +102,11 @@ function renderCard(
       onSave={props.save}
       onDiscard={props.discard}
     >
-      {fields.map(({ field }) => {
+      {fields.map(({ field, secret }) => {
         const control = state.fields[field]
         if (control === undefined) return null
         return (
-          <SecretField
+          <CredentialField
             key={field}
             id={`plugin-config-soc-${field}`}
             label={t(`soc_${field}` as never)}
@@ -60,6 +115,7 @@ function renderCard(
             // the process environment cannot be written from here.
             disabled={!control.writable}
             text={control.text}
+            masked={secret === true}
             configured={control.configured}
             stateLabel={control.configured ? t('socValueSet') : t('socValueUnset')}
             onEdit={(text) => { props.edit(field, text) }}

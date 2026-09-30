@@ -119,6 +119,25 @@ describe('the Threat Intelligence card', () => {
   })
 })
 
+describe('masking', () => {
+  it('masks the secrets and leaves the rest readable while typing', () => {
+    renderCard(SocCredentialsCard, SOC_FIELDS)
+    expand(en.socTitle)
+    for (const { field, secret } of SOC_FIELDS) {
+      const control = screen.getByLabelText(en[`soc_${field}` as keyof typeof en])
+      expect(control.getAttribute('type'), field).toBe(secret === true ? 'password' : 'text')
+    }
+  })
+
+  it('masks the API key but not the platform or the account name', () => {
+    renderCard(SocThreatIntelCard, TI_FIELDS)
+    expand(en.tiTitle)
+    expect(screen.getByLabelText(en.soc_tiDomain).getAttribute('type')).toBe('text')
+    expect(screen.getByLabelText(en.soc_tiUsername).getAttribute('type')).toBe('text')
+    expect(screen.getByLabelText(en.soc_tiApiKey).getAttribute('type')).toBe('password')
+  })
+})
+
 describe('the two cards together', () => {
   it('keep every reference distinct, so one card never writes the other\'s', () => {
     const refs = [...SOC_FIELDS, ...TI_FIELDS].map(entry => entry.ref)

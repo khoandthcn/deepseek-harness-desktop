@@ -42,6 +42,12 @@ export interface CardCredentialField {
   readonly field: string
   /** The credential reference the Host stores it under. */
   readonly ref: string
+  /**
+   * Whether the control masks what is typed. Only the two actual secrets do:
+   * a domain and a sign-in name are configuration the user needs to read back
+   * while typing, even though every value here travels write-only.
+   */
+  readonly secret?: boolean
 }
 
 /**
@@ -57,14 +63,14 @@ export interface CardCredentialField {
 export const SOC_FIELDS: readonly CardCredentialField[] = [
   { field: 'socDomain', ref: 'SOC_DOMAIN' },
   { field: 'socUsername', ref: 'SOC_USERNAME' },
-  { field: 'socPassword', ref: 'SOC_PASSWORD' },
+  { field: 'socPassword', ref: 'SOC_PASSWORD', secret: true },
 ]
 
 /** The Threat Intelligence card's controls: its host and its account. */
 export const TI_FIELDS: readonly CardCredentialField[] = [
   { field: 'tiDomain', ref: 'TI_DOMAIN' },
   { field: 'tiUsername', ref: 'TI_USERNAME' },
-  { field: 'tiApiKey', ref: 'TI_API_KEY' },
+  { field: 'tiApiKey', ref: 'TI_API_KEY', secret: true },
 ]
 
 /** What the credentials domain last reported for one reference. */
