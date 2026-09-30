@@ -328,7 +328,9 @@ describe('siem_search_alerts', () => {
     expect(path).toBe('/cymalertapi/v1/alerts/search')
     expect(body).toEqual({
       _from: 0, _sort: '-timestamp', _size: 1, query: 'severity = "High"', _counting: true,
-      time_from: 1000, time_to: 2000, tenants: 'acme', aggs: [],
+      // `aggs` as the string "[]": sent as a list, the API answers 400
+      // "[] is not of type 'string'".
+      time_from: 1000, time_to: 2000, tenants: 'acme', aggs: '[]',
     })
   })
 

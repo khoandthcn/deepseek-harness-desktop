@@ -116,6 +116,9 @@ describe('EdrAdapter', () => {
     })
     const env = await edr.getAgents(['A1'], ['policy'])
     expect(env.items[0]!.agentId).toBe('A1')
+    // The lookup reports no total; saying 0 beside the agent it found would
+    // read as "not found".
+    expect(env.total).toBe(1)
     const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
     expect(path).toBe('/agentManagement/QueryAgentInfoExtended')
     expect(body).toEqual({ agents: ['A1'], infos: ['policy'] })

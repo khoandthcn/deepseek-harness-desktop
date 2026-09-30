@@ -247,6 +247,16 @@ describe('nsm_search_events', () => {
     expect((out as any).alerts).toBeUndefined()
   })
 
+  it('reads the rows when the sensors return them directly, with no total', async () => {
+    // The distributed event search answers `data: [...]` rather than
+    // `data: { data: [...] }`, and reports no count: the rows are all it vouches for.
+    const path = searchPath('event', { tenant: 'vcs', sensor: 's1' })
+    const { byName } = defs(true, { [path]: { code: 200, data: [{ _id: 'e1' }, { _id: 'e2' }] } })
+    const out = await byName('nsm_search_events').execute({ tenant: 'vcs', sensor: 's1' })
+    expect(out).toMatchObject({ count: 2, returned: 2 })
+    expect((out as any).events).toEqual([{ _id: 'e1' }, { _id: 'e2' }])
+  })
+
   it('refuses without a tenant and a sensor rather than searching the wrong scope', async () => {
     const { http, byName } = defs(true)
     await expect(byName('nsm_search_events').execute({ tenant: 'dcn' })).rejects.toThrow(/tenant and sensor/)

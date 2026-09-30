@@ -191,12 +191,16 @@ export function parseNsmSearch(
   kind: 'alerts' | 'events' = 'alerts',
 ): NsmSearchResult {
   const what = kind === 'alerts' ? 'alert search' : 'event search'
-  const { data, count } = unwrapNsm(payload, what)
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+  const { data, count: reported } = unwrapNsm(payload, what)
+  if (typeof data !== 'object' || data === null) {
     throw new NsmContractError(`Expected an NSM ${what} result, got ${describe(data)}`)
   }
-  const rows = (data as Record<string, unknown>).data ?? []
+  // The alert search wraps its rows one level down (`data.data`); the
+  // distributed event search, answered by the sensors, returns them directly.
+  const rows = Array.isArray(data) ? data : (data as Record<string, unknown>).data ?? []
   if (!Array.isArray(rows)) throw new NsmContractError(`NSM ${what} \`data.data\` must be an array`)
+  // That same event search reports no total, so the rows are all it can vouch for.
+  const count = reported > 0 ? reported : rows.length
   const hits = rows.map((row) => {
     if (typeof row !== 'object' || row === null) return { value: row } as Record<string, unknown>
     const copy = { ...(row as Record<string, unknown>) }

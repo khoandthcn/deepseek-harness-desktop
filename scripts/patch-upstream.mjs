@@ -363,6 +363,13 @@ const SOC_PACKAGE_REFERENCES = {
     '../../util/launch-environment',
     '../soc-client',
   ],
+  // The shipped skills: a second filesystem skill provider over this package's
+  // own `skills/` directory.
+  'soc-skills': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../skill/skill-filesystem',
+  ],
 }
 for (const name of [
   'soc-client',
@@ -372,6 +379,7 @@ for (const name of [
   'tool-soc-siem',
   'tool-soc-nsm',
   'tool-soc-ti',
+  'soc-skills',
 ]) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
@@ -398,6 +406,28 @@ for (const name of [
   console.log(`copied: packages/soc/${name}`)
 }
 
+// The skills themselves live at the top of this repository, where they are
+// written and tested; they travel into the package that ships them. A brand
+// pack names a company and is kept out of version control, so it must not ride
+// along even when one sits in the working tree; neither do test files or caches.
+const SKILLS_FROM = join(here, 'skills')
+const SKILLS_TO = join(root, 'packages', 'soc', 'soc-skills', 'skills')
+const SKILL_EXCLUDED = /(^|[\\/])(brand|__pycache__|\.pytest_cache|\.DS_Store)([\\/]|$)|(^|[\\/])test_[^\\/]*\.py$/
+cpSync(SKILLS_FROM, SKILLS_TO, {
+  recursive: true,
+  filter: source => !SKILL_EXCLUDED.test(relative(SKILLS_FROM, source)),
+})
+for (const skill of readdirSync(SKILLS_TO, { withFileTypes: true })) {
+  if (!skill.isDirectory()) continue
+  if (!existsSync(join(SKILLS_TO, skill.name, 'SKILL.md'))) {
+    throw new Error(`patch-upstream: skills/${skill.name} has no SKILL.md, so it would ship without being a skill`)
+  }
+  if (existsSync(join(SKILLS_TO, skill.name, 'brand'))) {
+    throw new Error(`patch-upstream: skills/${skill.name}/brand must not ship; it names a company`)
+  }
+  console.log(`copied: packages/soc/soc-skills/skills/${skill.name}`)
+}
+
 // The Desktop seed is the dependency closure of `@deepseek-ai/dsh` (apps/cli),
 // so a package nothing depends on gets packed but never seeded: the profile
 // would offer the soc-cloud preset and then fail to mount it, because the two
@@ -413,6 +443,7 @@ for (const name of [
   'dsh-tool-soc-siem',
   'dsh-tool-soc-nsm',
   'dsh-tool-soc-ti',
+  'dsh-soc-skills',
 ]) {
   cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
 }
@@ -435,7 +466,8 @@ patch(
   + '      "@deepseek-ai/dsh-tool-soc-edr": ["./packages/soc/tool-soc-edr/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n'
-  + '      "@deepseek-ai/dsh-tool-soc-ti": ["./packages/soc/tool-soc-ti/src"],\n',
+  + '      "@deepseek-ai/dsh-tool-soc-ti": ["./packages/soc/tool-soc-ti/src"],\n'
+  + '      "@deepseek-ai/dsh-soc-skills": ["./packages/soc/soc-skills/src"],\n',
 )
 patch(
   'tsconfig.host.json',
@@ -447,7 +479,8 @@ patch(
   + '    { "path": "./packages/soc/tool-soc-edr" },\n'
   + '    { "path": "./packages/soc/tool-soc-siem" },\n'
   + '    { "path": "./packages/soc/tool-soc-nsm" },\n'
-  + '    { "path": "./packages/soc/tool-soc-ti" },\n',
+  + '    { "path": "./packages/soc/tool-soc-ti" },\n'
+  + '    { "path": "./packages/soc/soc-skills" },\n',
 )
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))

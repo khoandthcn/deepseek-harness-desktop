@@ -10,6 +10,7 @@
 //   - `tool-soc-siem` registers the read-only SIEM tools (same session)
 //   - `tool-soc-nsm` registers the read-only NSM/NDR tools (same session)
 //   - `tool-soc-ti` registers the read-only Threat Intelligence tools (own account)
+//   - `soc-skills` offers the skills that ship with the preset (the monthly report)
 // The append point is the end of the upstream composition, so this generator
 // fails loud only when the generated `standard-brave` preset itself is gone.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -79,6 +80,11 @@ export const socRows = () => [
   '',
   '    - id: tool-soc-ti',
   "      name: '@deepseek-ai/dsh-tool-soc-ti'",
+  '',
+  '    # The skills that ship with this preset, such as the monthly report: a',
+  '    # skill provider of its own over the directory inside this package.',
+  '    - id: soc-skills',
+  "      name: '@deepseek-ai/dsh-soc-skills'",
   '',
 ]
 

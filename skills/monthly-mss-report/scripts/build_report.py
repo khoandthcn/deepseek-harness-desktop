@@ -26,6 +26,7 @@ import html
 import json
 import math
 import mimetypes
+import os
 import shutil
 import subprocess
 import sys
@@ -521,6 +522,61 @@ def level_chart(rows: list[dict] | None) -> str:
 
 # ── brand ────────────────────────────────────────────────────────────────────
 
+#: What a report looks like when no brand pack is found: neutral names and no
+#: images. It is a complete brand, so a report always renders — a missing pack
+#: shows as "Your Company" on the cover, which nobody mistakes for finished.
+DEFAULT_BRAND = {
+    'provider_name': 'YOUR COMPANY',
+    'provider_legal': 'Your Company',
+    'provider_short': 'the provider',
+    'service_header': 'Managed Security Service',
+    'report_title': 'MANAGED SECURITY SERVICE',
+    'accent': '#ee0033',
+    'ownership_notice': 'Documents are owned by Your Company, all forms of unauthorized copying and sharing are strictly prohibited.',
+    'header_on_every_page': False,
+    'solutions': {'siem': 'SIEM', 'edr': 'Endpoint Detection & Response (EDR)',
+                  'nsm': 'Network Security Monitoring (NSM)'},
+    'footer': {'company': 'Your Company', 'address': '', 'phone': '', 'email': '', 'website': ''},
+    'images': {},
+}
+
+
+def brand_candidates(explicit: Path | None) -> list[Path]:
+    """Where a brand pack is looked for, most specific first.
+
+    The skill ships inside the application, which replaces it on every update,
+    so a company's own pack cannot live there. It belongs with the user: in the
+    workspace for one project, or in the Harness home for every report this
+    person makes.
+
+    :param explicit: the ``--brand`` argument, if given.
+    :returns: the directories to try, in order.
+    """
+    home = Path(os.environ.get('DSH_HOME', '').strip() or Path.home() / '.dsh')
+    named = os.environ.get('MSS_REPORT_BRAND', '').strip()
+    return [path for path in (
+        explicit,
+        Path(named) if named else None,
+        Path.cwd() / '.dsh' / 'report-brand',
+        home / 'report-brand',
+        SKILL_DIR / 'brand',
+    ) if path is not None]
+
+
+def find_brand(explicit: Path | None) -> tuple[dict, Path | None]:
+    """Load the first brand pack found, or the neutral default.
+
+    :param explicit: the ``--brand`` argument, if given.
+    :returns: the brand and the directory it came from (``None`` for the default).
+    """
+    if explicit is not None and not (explicit / 'brand.json').exists():
+        sys.exit(f'build_report: no brand.json in {explicit}.')
+    for directory in brand_candidates(explicit):
+        if (directory / 'brand.json').exists():
+            return load_brand(directory), directory
+    return {**DEFAULT_BRAND, '_images': {}}, None
+
+
 def load_brand(directory: Path) -> dict:
     """Read a brand pack: names, footer lines and images of the issuing company.
 
@@ -531,9 +587,7 @@ def load_brand(directory: Path) -> dict:
     :returns: the brand, with each image inlined as a data URI.
     """
     path = directory / 'brand.json'
-    if not path.exists():
-        sys.exit(f'build_report: no brand pack at {path}. Copy brand.example to brand/ and fill it in.')
-    brand = json.loads(path.read_text(encoding='utf8'))
+    brand = {**DEFAULT_BRAND, **json.loads(path.read_text(encoding='utf8'))}
     images = {}
     for key, name in (brand.get('images') or {}).items():
         file = directory / name
@@ -1111,7 +1165,8 @@ def main() -> int:
     parser.add_argument('--utc-offset', type=float, default=7.0,
                         help='hours east of UTC that the month boundaries are taken in (init, default 7)')
     parser.add_argument('--out', type=Path, help='the HTML file to write (render)')
-    parser.add_argument('--brand', type=Path, help='brand pack directory (default: <skill>/brand)')
+    parser.add_argument('--brand', type=Path,
+                        help='brand pack directory (default: .dsh/report-brand in the workspace, then ~/.dsh/report-brand)')
     parser.add_argument('--pdf', action='store_true', help='also print a PDF with a local Chromium-family browser')
     parser.add_argument('--allow-draft', action='store_true',
                         help='render even with missing or inconsistent data, stamped DRAFT on every page')
@@ -1145,10 +1200,16 @@ def main() -> int:
         return 2
     if args.out is None:
         parser.error('render needs --out')
-    brand_dir = args.brand or (SKILL_DIR / 'brand' if (SKILL_DIR / 'brand').exists() else SKILL_DIR / 'brand.example')
-    brand = load_brand(brand_dir)
+    brand, brand_dir = find_brand(args.brand)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(render(data, brand, draft=findings.blocking), encoding='utf8')
     print(f'\nwrote: {args.out}{" (DRAFT)" if findings.blocking else ""}')
+    if brand_dir is None:
+        print('brand: none found, so the report carries placeholder names and no logo. Put a brand pack '
+              f'(brand.json and its images) in {Path.home() / ".dsh" / "report-brand"} or in '
+              '.dsh/report-brand of the workspace; see brand.example beside this skill.')
+    else:
+        print(f'brand: {brand_dir}')
     sources = args.out.with_suffix('.sources.md')
     write_sources(data, derive(data), sources)
     print(f'wrote: {sources}')

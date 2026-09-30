@@ -17,6 +17,16 @@ Everything lives beside this file; call it `$SKILL` (the directory the `skill` t
 
 Speak to the user in their language. The report itself is in English, as the template is.
 
+**If the shell cannot run the script where it is** (the skill ships inside the application, and a
+sandboxed shell may not reach it): read `scripts/build_report.py` with the file-read tool, write a copy
+to `reports/.tools/build_report.py` in the workspace, and run that copy instead. It needs nothing beside
+itself and Python 3.
+
+**The company's names and logo** come from a brand pack — a `brand.json` and its images. The script
+looks in `.dsh/report-brand` of the workspace, then in `report-brand` under the Harness home
+(`~/.dsh`), and says which it used. With none, the report renders with placeholder names and no logo:
+tell the user, and point them at `brand.example` beside this file.
+
 ## Rules that are not negotiable
 
 1. **One tenant, one calendar month.** Every query carries the tenant and the exact period bounds

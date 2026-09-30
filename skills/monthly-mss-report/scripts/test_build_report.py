@@ -127,5 +127,51 @@ class RenderTests(unittest.TestCase):
         self.assertIn('<b>3/4</b>', page)
 
 
+class BrandTests(unittest.TestCase):
+    """Where the company's names and images are found, and what happens without them."""
+
+    def _isolated(self, home: str, run):
+        import os
+        old_home, old_named, old_cwd = os.environ.get('DSH_HOME'), os.environ.pop('MSS_REPORT_BRAND', None), os.getcwd()
+        os.environ['DSH_HOME'] = home
+        os.chdir(home)
+        try:
+            return run()
+        finally:
+            os.chdir(old_cwd)
+            os.environ.pop('DSH_HOME')
+            if old_home is not None:
+                os.environ['DSH_HOME'] = old_home
+            if old_named is not None:
+                os.environ['MSS_REPORT_BRAND'] = old_named
+
+    def test_the_users_own_pack_outranks_the_one_beside_the_skill(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as home:
+            pack = Path(home).resolve() / 'report-brand'
+            pack.mkdir()
+            (pack / 'brand.json').write_text(json.dumps({'provider_name': 'ACME SEC', 'provider_legal': 'Acme Sec'}))
+            brand, where = self._isolated(home, lambda: br.find_brand(None))
+            self.assertEqual(Path(where).resolve(), pack)
+        self.assertEqual(brand['provider_name'], 'ACME SEC')
+        # a partial pack is completed from the defaults rather than breaking the render
+        self.assertEqual(brand['report_title'], 'MANAGED SECURITY SERVICE')
+
+    def test_the_workspace_pack_outranks_the_users(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as home:
+            order = self._isolated(home, lambda: [str(Path(c).resolve()) for c in br.brand_candidates(None)])
+            root = str(Path(home).resolve())
+        self.assertLess(order.index(f'{root}/.dsh/report-brand'), order.index(f'{root}/report-brand'))
+        self.assertEqual(order[-1], str((br.SKILL_DIR / 'brand').resolve()))
+
+    def test_a_report_still_renders_with_the_neutral_default(self):
+        # The skill ships inside the application with no company's pack; the
+        # first report on a new machine must come out, visibly unbranded.
+        page = br.render(EXAMPLE, {**br.DEFAULT_BRAND, '_images': {}}, draft=False)
+        self.assertIn('YOUR COMPANY', page)
+        self.assertIn('Tier 1 – Your Company', page)
+
+
 if __name__ == '__main__':
     unittest.main()

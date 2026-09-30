@@ -221,3 +221,14 @@ describe('the detail reads', () => {
     expect(await byName('ti_get_credit_card_leak').execute({ ccleak_id: '69e0c73e' })).toEqual({ id: '69e0c73e' })
   })
 })
+
+describe('ti_search_easm_assets asset type', () => {
+  it('says which types exist instead of sending a search the platform refuses', async () => {
+    const { http, byName } = defs(true, { [TI_PATHS.easmAsset]: envelope([]) })
+    await expect(byName('ti_search_easm_assets').execute({ size: 3 })).rejects.toThrow(/needs `type`: "domain" or "ipaddress"/)
+    await expect(byName('ti_search_easm_assets').execute({ type: 'ip' })).rejects.toThrow(/needs `type`/)
+    expect(http.postJson).not.toHaveBeenCalled()
+    await byName('ti_search_easm_assets').execute({ type: 'ipaddress' })
+    expect((callsOf(http.postJson)[0] as [string, Record<string, unknown>])[1].type).toBe('ipaddress')
+  })
+})

@@ -559,7 +559,9 @@ export function createSiemToolDefs({ http, auth, now, newQueryId }: CreateSiemTo
           time_from: window.time_from,
           time_to: window.time_to,
           tenants: typeof args.tenants === 'string' ? args.tenants : '',
-          aggs: [],
+          // A JSON list written as a string, not a list: the API reference
+          // shows an array here and the API refuses one.
+          aggs: '[]',
         })
         return parseSiemAlertSearch(raw, window)
       }),

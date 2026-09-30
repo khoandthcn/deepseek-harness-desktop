@@ -29,6 +29,7 @@ import Group from '@deepseek-ai/cordis-plugin-group'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -83,6 +84,9 @@ beforeEach(async () => {
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt, { personaPrefix: '' })
   await ctx.plugin(ToolRuntime)
+  // The shipped-skills row registers a provider on the skill registry and
+  // waits for one; without it that row never activates and the mount fails.
+  await ctx.plugin(SkillRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(AgentPresets, {

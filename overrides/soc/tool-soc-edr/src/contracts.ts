@@ -98,7 +98,9 @@ export function parseEdrSearchEnvelope<T>(
   if (!Array.isArray(rawItems)) {
     throw new EdrContractError(`Search envelope \`${listKey}\` must be an array`)
   }
-  const total = obj[countKey] ?? 0
+  // A lookup by id returns its rows with no total; reporting 0 beside a
+  // non-empty list would say "nothing found" about what was just found.
+  const total = obj[countKey] ?? rawItems.length
   if (typeof total !== 'number') {
     throw new EdrContractError(`Search envelope \`${countKey}\` must be a number`)
   }

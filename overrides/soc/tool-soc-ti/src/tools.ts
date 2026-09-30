@@ -450,10 +450,15 @@ export function createTiToolDefs({ http, auth, now }: CreateTiToolDefsOptions): 
       name: 'ti_search_easm_assets',
       description:
         'Search the attack-surface inventory: the organisation\'s internet-facing assets the platform'
-        + ' discovered, with their addresses, hosting and issue counts.',
+        + ' discovered, with their addresses, hosting and issue counts. One kind of asset per call:'
+        + ' `type` is "domain" or "ipaddress".',
       parameters: {
         ...SEARCH_PARAMS,
-        type: { type: 'string', description: 'Asset type to list, e.g. "domain" or "ip".' },
+        type: {
+          type: 'string',
+          enum: ['domain', 'ipaddress'],
+          description: 'Which kind of asset to list — required: "domain" or "ipaddress".',
+        },
         status: { type: 'array', items: { type: 'integer' }, description: 'Asset states to include.' },
         status_code: {
           type: 'array',
@@ -463,6 +468,10 @@ export function createTiToolDefs({ http, auth, now }: CreateTiToolDefsOptions): 
       },
       output: JSON_OUTPUT,
       execute: guarded(async (args) => {
+        // The platform refuses the search without one, so say which before asking.
+        if (args.type !== 'domain' && args.type !== 'ipaddress') {
+          throw new Error('ti_search_easm_assets needs `type`: "domain" or "ipaddress".')
+        }
         return parseTiSearch(await http.postJson(TI_PATHS.easmAsset, easmBody(args, clock())), 'EASM asset')
       }),
     },
