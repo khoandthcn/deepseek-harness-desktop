@@ -205,7 +205,7 @@ export async function establishAppSession(
   // authorize → system callback: with the SSO cookie the authorize skips the
   // login form and 302s straight to the callback carrying `code`. Cap the hops
   // so a misconfiguration surfaces as an error rather than an infinite loop.
-  const callbackUrl = new URL(callbackBase)
+  const callbackUrl = new URL(callbackBase ?? opts.redirectUri)
   for (let hop = 0; hop < 8; hop++) {
     const res = await request(next)
     if (!REDIRECT_STATUSES.has(res.status)) {
