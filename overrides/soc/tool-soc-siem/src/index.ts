@@ -70,12 +70,20 @@ export function apply(ctx: Context, config: Config = {}): void {
     return client
   }
 
+  /** The client for a path, once the token that path needs is in hand. */
+  const routed = async (path: string): Promise<SocHttp> => {
+    const route = SIEM_TOKEN_FOR[path]
+    if (!route) throw new Error(`tool-soc-siem: no SIEM token route for ${path}`)
+    await auth.siemToken(route.audience, route.scope)
+    return clientFor(route.audience, route.scope)
+  }
+
   const siemHttp: SiemHttpLike = {
     async postJson<T>(path: string, body: unknown): Promise<T> {
-      const route = SIEM_TOKEN_FOR[path]
-      if (!route) throw new Error(`tool-soc-siem: no SIEM token route for ${path}`)
-      await auth.siemToken(route.audience, route.scope)
-      return clientFor(route.audience, route.scope).postJson<T>(path, body)
+      return (await routed(path)).postJson<T>(path, body)
+    },
+    async postEmpty<T>(path: string): Promise<T> {
+      return (await routed(path)).postEmpty<T>(path)
     },
   }
 
