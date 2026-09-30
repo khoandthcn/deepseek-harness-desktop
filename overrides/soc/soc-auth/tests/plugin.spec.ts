@@ -49,8 +49,9 @@ describe('soc-auth mounting', () => {
     for (const field of socAuth.SOC_ENDPOINT_FIELDS) {
       expect(Object.keys(entry), field).toContain(field)
     }
-    // the portal client id is not a card field: it is fixed per platform
-    expect(Object.keys(entry)).not.toContain('clientId')
+    // the client id is among them: a public build carries no platform's, so
+    // the card is the only place a user of one can supply it
+    expect(Object.keys(entry)).toContain('clientId')
   })
 
   it('mounts with no config block at all, as the preset row has none', async () => {

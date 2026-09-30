@@ -459,6 +459,21 @@ describe('SocAuthService without endpoints', () => {
     expect(svc.isAuthenticated()).toBe(false)
   })
 
+  it('names the client id when a domain alone was configured, rather than letting the platform refuse', async () => {
+    // What a user of a public build hits: the domain derives every URL, so
+    // nothing reports as missing, but sign-in still has no client to present.
+    const svc = new SocAuthService({
+      endpoints: () => ({ values: {}, missing: [], filePath: '/home/u/.dsh/soc-endpoints.json' }),
+      endpointOverrides: async () => ({ socDomain: 'soc.example.com' }),
+      credentials: async () => ({ username: 'u', password: 'p' }),
+      fetchImpl: vi.fn(async () => { throw new Error('the network must not be touched') }) as any,
+    })
+    const err = await expectNoSecrets(svc.login(OTP))
+    expect(err.message).toMatch(/client id is not configured/)
+    expect(err.message).toContain('SOC_CLIENT_ID')
+    expect(svc.isAuthenticated()).toBe(false)
+  })
+
   it('lets a preset row supply what the machine did not', async () => {
     const svc = new SocAuthService({
       endpoints: { values: {}, missing: ['iamUrl', 'clientId', 'redirectUri', 'soarBaseUrl'], filePath: '/x' },
@@ -535,7 +550,7 @@ describe('SocAuthService configured by one domain', () => {
   it('keeps a system that the deployment pinned by hand', async () => {
     const svc = new SocAuthService({
       endpoints: () => ({
-        values: { socDomain: 'example.com', siemBaseUrl: 'https://siem-2.example.net' },
+        values: { socDomain: 'example.com', clientId: 'cid', siemBaseUrl: 'https://siem-2.example.net' },
         missing: [],
         filePath: '/x',
       }),

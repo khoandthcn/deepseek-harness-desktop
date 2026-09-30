@@ -49,6 +49,7 @@ export const SOC_TI_NS = 'soc-threat-intel'
  */
 const SocCredentialsSection = z.object({
   socDomain: z.string().default(''),
+  clientId: z.string().default(''),
 })
 
 /** The settings section behind the Threat Intelligence card. */
@@ -62,13 +63,17 @@ const SocThreatIntelSection = z.object({
  * and password. They are configuration rather than secrets, but that store is
  * the one the card can write to, and it keeps every SOC setting in one place.
  *
- * Three fields, not one per system: the platform hosts each system on a
+ * Two fields, not one per system: the platform hosts each system on a
  * subdomain of one root, so the domain configures all of them (see
- * `deriveFromDomain`). A deployment that departs from that convention pins the
- * odd URL in `soc-endpoints.json` or in its preset row instead.
+ * `deriveFromDomain`). The client id cannot be derived — it is the identifier
+ * the platform issued for this app — and a public build carries no platform's,
+ * so the card is where a user supplies it. A deployment that departs from the
+ * subdomain convention pins the odd URL in `soc-endpoints.json` or in its
+ * preset row instead.
  */
 export const SOC_ENDPOINT_FIELDS = [
   'socDomain',
+  'clientId',
 ] as const
 
 /**
@@ -238,6 +243,7 @@ function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       socDomain: '',
+      clientId: '',
     }, {
       setSource: () => {},
       onChange: () => {},

@@ -52,16 +52,20 @@ export interface CardCredentialField {
 
 /**
  * The SOC card's controls: the platform domain every system's URL is derived
- * from, and the sign-in itself.
+ * from, the OAuth client the platform issued for this app, and the sign-in.
  *
- * Two settings are deliberately absent, because neither is a per-user choice.
- * The portal's OAuth client id is fixed per platform. The tenant defaults to
- * the account's own top-level one, which already sees every tenant below it
- * that the account may see. A deployment that needs another value sets it in
- * `soc-endpoints.json` or in its preset row.
+ * The client id is per deployment, not per user, but it has to be here: a
+ * public build carries no platform's identifiers, so without this control a
+ * user who installed one has no way to supply it and sign-in cannot start.
+ *
+ * The tenant is deliberately absent — it defaults to the account's own
+ * top-level one, which already sees every tenant below it the account may see.
+ * A deployment that needs another value sets it in `soc-endpoints.json` or in
+ * its preset row.
  */
 export const SOC_FIELDS: readonly CardCredentialField[] = [
   { field: 'socDomain', ref: 'SOC_DOMAIN' },
+  { field: 'socClientId', ref: 'SOC_CLIENT_ID' },
   { field: 'socUsername', ref: 'SOC_USERNAME' },
   { field: 'socPassword', ref: 'SOC_PASSWORD', secret: true },
 ]

@@ -76,13 +76,16 @@ describe('the SOC platform card', () => {
     }
   })
 
-  it('carries neither the client id nor the tenant: neither is a per-user choice', () => {
+  it('carries the sign-in client id, which a public build cannot know', () => {
     renderCard(SocCredentialsCard, SOC_FIELDS)
     expand(en.socTitle)
-    const fields = SOC_FIELDS.map(entry => entry.field)
-    expect(fields).not.toContain('clientId')
-    expect(fields).not.toContain('tenant')
-    expect(screen.queryByLabelText(/client id/i)).toBeNull()
+    expect(screen.getByLabelText(en.soc_socClientId)).toBeTruthy()
+  })
+
+  it('carries no tenant: the account\'s own already covers what it may see', () => {
+    renderCard(SocCredentialsCard, SOC_FIELDS)
+    expand(en.socTitle)
+    expect(SOC_FIELDS.map(entry => entry.field)).not.toContain('tenant')
   })
 
   it('stages the platform domain, which configures every system', () => {

@@ -13,11 +13,18 @@ It touches three places, and nothing else:
   * The ``soc-credentials`` and ``soc-threat-intel`` sections of
     ``~/.dsh/settings.yaml``.
 
+``--purge-legacy`` widens it to what earlier builds left behind — a retired
+profile, an old backup of this script's own, and any SOC setting pinned in a
+user preset or exported in the shell. Those last two are reported rather than
+edited: a preset file and a shell profile are the user's own, and a script that
+rewrites them silently is worse than one that says where to look.
+
 Everything removed is copied first, so a run is undoable:
 
-    python3 scripts/reset-soc-config.py              # back up, then clear
-    python3 scripts/reset-soc-config.py --dry-run    # say what it would clear
-    python3 scripts/reset-soc-config.py --restore    # put the last backup back
+    python3 scripts/reset-soc-config.py                 # back up, then clear
+    python3 scripts/reset-soc-config.py --dry-run       # say what it would clear
+    python3 scripts/reset-soc-config.py --purge-legacy  # also clear what old builds left
+    python3 scripts/reset-soc-config.py --restore       # put the last backup back
 
 Quit the app first: it holds these files open and rewrites them on exit.
 """
@@ -64,6 +71,80 @@ SOC_REFS = (
 SOC_SECTIONS = ('soc-credentials', 'soc-threat-intel')
 
 BACKUP_PREFIX = 'soc-reset-backup-'
+
+#: Environment variables that outrank the cards: a value exported here is read
+#: before anything the user types, so a stale one makes a corrected setting look
+#: ignored. Reported, never unset — this process cannot change its parent shell.
+LEGACY_ENV_PREFIXES = ('SOC_', 'TI_')
+
+#: Shell files an earlier setup may have exported those from.
+SHELL_FILES = ('.zshrc', '.zshenv', '.zprofile', '.bash_profile', '.bashrc', '.profile')
+
+
+def legacy_env() -> list[str]:
+    """SOC and Threat Intelligence variables exported in this environment.
+
+    :returns: the variable names, without their values.
+    """
+    return sorted(
+        name for name in os.environ
+        if name.startswith(LEGACY_ENV_PREFIXES) and name != 'TI_'
+    )
+
+
+def legacy_shell_files() -> list[Path]:
+    """Shell start-up files that mention one of those variables.
+
+    :returns: the files to look in, never their contents.
+    """
+    found = []
+    for name in SHELL_FILES:
+        path = Path.home() / name
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding='utf8', errors='replace')
+        except OSError:
+            continue
+        if any(f'{prefix}' in text for prefix in ('SOC_', 'TI_DOMAIN', 'TI_USERNAME', 'TI_API_KEY')):
+            found.append(path)
+    return found
+
+
+def legacy_presets(home: Path) -> list[Path]:
+    """User presets that pin a SOC setting in their own ``config:`` block.
+
+    A preset row outranks every other source, so one left over from an earlier
+    build keeps pointing the tools at an address the cards cannot correct.
+
+    :param home: the Harness home.
+    :returns: the preset files that mention one.
+    """
+    root = home / '.agent-presets'
+    if not root.is_dir():
+        return []
+    keys = ('socDomain', 'clientId', 'iamUrl', 'redirectUri', 'soarBaseUrl', 'edrBaseUrl',
+            'siemBaseUrl', 'nsmBaseUrl', 'tenant')
+    found = []
+    for path in sorted(root.glob('*/*.yml')):
+        try:
+            text = path.read_text(encoding='utf8', errors='replace')
+        except OSError:
+            continue
+        if any(f'{key}:' in text for key in keys):
+            found.append(path)
+    return found
+
+
+def legacy_directories(home: Path) -> list[Path]:
+    """Directories an earlier build or an earlier run of this script left.
+
+    :param home: the Harness home.
+    :returns: retired profiles and this script's own older backups.
+    """
+    retired = sorted(p for p in (home / 'profiles').glob('*.old') if p.is_dir())
+    backups = sorted(p for p in home.glob(f'{BACKUP_PREFIX}*') if p.is_dir())
+    return retired + backups
 
 
 def dsh_home() -> Path:
@@ -188,6 +269,25 @@ def restore(home: Path) -> int:
     return 0
 
 
+def report_legacy(variables: list[str], shell_files: list[Path], presets: list[Path]) -> None:
+    """Name what this script will not touch but that still overrides the cards.
+
+    :param variables: SOC and Threat Intelligence variables in this environment.
+    :param shell_files: shell start-up files that mention one.
+    :param presets: user presets that pin a SOC setting.
+    """
+    if not variables and not shell_files and not presets:
+        return
+    print('\nLeft in place, and read BEFORE anything typed in the app:')
+    if variables:
+        print(f'  environment: {", ".join(variables)}')
+        print('    unset them in the shell that starts the app, or remove the export below.')
+    for path in shell_files:
+        print(f'  shell file: {path} — mentions SOC_/TI_; edit it yourself.')
+    for path in presets:
+        print(f'  preset: {path} — pins a SOC setting in its config block; edit it yourself.')
+
+
 def main() -> int:
     """Run the reset, the dry run, or the restore.
 
@@ -195,6 +295,10 @@ def main() -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--dry-run', action='store_true', help='say what would be cleared')
+    parser.add_argument(
+        '--purge-legacy', action='store_true',
+        help='also clear what earlier builds left: retired profiles and older backups',
+    )
     parser.add_argument('--restore', action='store_true', help='put the most recent backup back')
     arguments = parser.parse_args()
 
@@ -206,8 +310,14 @@ def main() -> int:
         return restore(home)
 
     refs, sections, endpoints = plan(home)
-    if not refs and not sections and not endpoints:
+    directories = legacy_directories(home) if arguments.purge_legacy else []
+    # Always surveyed, whatever the mode: these outrank the cards, so a machine
+    # carrying one has a setting the user cannot correct from the app, and
+    # saying so is the whole point of running this.
+    variables, shell_files, presets = legacy_env(), legacy_shell_files(), legacy_presets(home)
+    if not refs and not sections and not endpoints and not directories:
         print(f'Nothing to clear: {home} holds no SOC or Threat Intelligence configuration.')
+        report_legacy(variables, shell_files, presets)
         return 0
 
     print(f'Harness home: {home}')
@@ -217,8 +327,11 @@ def main() -> int:
         print(f'  settings sections to clear: {", ".join(sections)}')
     if endpoints:
         print('  endpoints file to remove: soc-endpoints.json')
+    for directory in directories:
+        print(f'  directory to remove: {directory.relative_to(home)}')
     if arguments.dry_run:
         print('\nDry run: nothing was changed.')
+        report_legacy(variables, shell_files, presets)
         return 0
 
     directory = backup(home)
@@ -232,8 +345,14 @@ def main() -> int:
     if endpoints:
         (home / 'soc-endpoints.json').unlink()
         print('removed: soc-endpoints.json')
+    for target in directories:
+        # The fresh backup is taken before this runs and is not in the list,
+        # so an undo is still possible after a purge.
+        shutil.rmtree(target)
+        print(f'removed: {target.relative_to(home)}')
     print('\nStart the app and configure it from Settings → Plugins.')
     print(f'To undo: python3 {Path(__file__).name} --restore')
+    report_legacy(variables, shell_files, presets)
     return 0
 
 

@@ -297,6 +297,16 @@ export class SocAuthService {
     if (this.endpoints.missing.length > 0) {
       throw new SocAuthError(`SOC auth: ${missingEndpointsMessage(this.endpoints)}`)
     }
+    // Checked here rather than left to the platform: an empty client id makes
+    // the authorize come back as a generic OAuth refusal, which reads like a
+    // wrong password and sends the user looking in the wrong place.
+    if (this.clientId === '') {
+      throw new SocAuthError(
+        'SOC auth: the sign-in client id is not configured. Fill it in under '
+        + 'Settings → Plugins → SOC Cloud — your SOC administrator has the value — '
+        + 'or set clientId in soc-endpoints.json, or SOC_CLIENT_ID in the environment.',
+      )
+    }
     this.invalidate()
     let cookies: Record<string, string> = {}
     const { username, password } = await this.credentials()
