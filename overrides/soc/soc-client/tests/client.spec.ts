@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { SocHttp, parseD1nBootstrap } from '../src/index.ts'
+import { describeRefusal, SocHttp, parseD1nBootstrap } from '../src/index.ts'
 import { SocAuthError, SocMalformedError, SocNotFoundError } from '../src/errors.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
@@ -32,6 +32,38 @@ describe('SocHttp', () => {
     expect(call[1].body).toBe('')
     expect(call[1].headers['content-type']).toMatch(/application\/json/)
   })
+  it('sends the origin and referer of the host it is calling, as its own page would', async () => {
+    // A CSRF check reads the referer and a gateway may read the origin; a
+    // request with neither is refused with a status that names no reason.
+    const f = stubFetch(200, JSON.stringify({ ok: true }))
+    await new SocHttp('https://nsm.example/', { fetchImpl: f }).postJson('/api/v1/group_by', {})
+    const headers = callsOf(f)[0]![1].headers
+    expect(headers.origin).toBe('https://nsm.example')
+    expect(headers.referer).toBe('https://nsm.example/')
+  })
+
+  it('says what the upstream said when it refuses, not just the status', async () => {
+    const f = stubFetch(400, JSON.stringify({ error: 'sort_field is not a sortable field' }))
+    const http = new SocHttp('https://nsm.example', { fetchImpl: f })
+    await expect(http.postJson('/x', {})).rejects.toThrow(/failed with 400 \(body: .*sort_field is not a sortable field/)
+  })
+
+  it('says so when a refusal carried no body at all', async () => {
+    const http = new SocHttp('https://siem.example', { fetchImpl: stubFetch(444, '') })
+    await expect(http.postJson('/x', {})).rejects.toThrow(/failed with 444 \(no response body\)/)
+  })
+
+  it('never quotes a credential out of a refusal', () => {
+    const quoted = describeRefusal(JSON.stringify({
+      message: 'expired', access_token: 'abc.def.ghi', detail: 'Bearer eyJhbGciOiJSUzI1NiJ9.payload.signature',
+      blob: 'A'.repeat(60),
+    }))
+    expect(quoted).toContain('expired')
+    expect(quoted).not.toContain('abc.def.ghi')
+    expect(quoted).not.toContain('eyJhbGciOiJSUzI1NiJ9')
+    expect(quoted).not.toContain('A'.repeat(40))
+  })
+
   it('maps 401 to SocAuthError', async () => {
     const http = new SocHttp('https://x', { fetchImpl: stubFetch(401, '{}') })
     await expect(http.postJson('/x', {})).rejects.toBeInstanceOf(SocAuthError)

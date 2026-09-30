@@ -844,14 +844,31 @@ export class SocAuthService {
 
   /**
    * Headers for a SIEM API request: the per-API token as a Bearer (its SPA's
-   * APIClient sends `Authorization: Bearer`), plus the WAF `D1N` cookie.
+   * APIClient sends `Authorization: Bearer`), plus the cookies SIEM's own host
+   * set — its gatekeeper session and the WAF `D1N`.
+   *
+   * Only the WAF cookie used to be sent. The event search accepts that, but
+   * every API behind SIEM's other gateway answered 444 from the first day: a
+   * browser calls them with the gatekeeper session attached, and that gateway
+   * evidently wants it. The identity server's cookies are left out — they
+   * belong to another host, and the jar holds them only because one flat map
+   * serves the whole sign-in.
    */
   siemAuthHeaders(audience = SIEM_GATEKEEPER_AUDIENCE, scope = SIEM_GATEKEEPER_SCOPE): Record<string, string> {
     const headers: Record<string, string> = {}
     const cred = this.siemCreds.get(`${audience}/${scope}`)
     if (cred) headers.Authorization = `${cred.type} ${cred.token}`
-    const d1n = this.siemJar?.[D1N_COOKIE] ?? this.cookies[D1N_COOKIE]
-    if (d1n !== undefined) headers.Cookie = `${D1N_COOKIE}=${d1n}`
+    const own: Record<string, string> = {}
+    for (const [name, value] of Object.entries(this.siemJar ?? {})) {
+      // Set or changed during SIEM's own sign-in, so SIEM's; anything the
+      // identity server's jar holds under the same value came from there.
+      if (name === D1N_COOKIE || this.cookies[name] !== value) own[name] = value
+    }
+    if (own[D1N_COOKIE] === undefined && this.cookies[D1N_COOKIE] !== undefined) {
+      own[D1N_COOKIE] = this.cookies[D1N_COOKIE]
+    }
+    const cookie = Object.entries(own).map(([name, value]) => `${name}=${value}`).join('; ')
+    if (cookie !== '') headers.Cookie = cookie
     return headers
   }
 

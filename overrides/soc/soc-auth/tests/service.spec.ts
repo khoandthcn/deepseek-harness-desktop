@@ -1122,7 +1122,7 @@ describe('SocAuthService.siemToken', () => {
 })
 
 describe('SocAuthService.siemAuthHeaders', () => {
-  it('carries the per-API Bearer plus the WAF D1N cookie', async () => {
+  it('carries the per-API Bearer plus the cookies SIEM\'s own host set', async () => {
     const f = stubFetchSiem([json(200, { access_token: 'GK-1', token_type: 'Bearer', expires_in: 3600 })])
     const svc = makeSiemService(f)
     await svc.login(OTP)
@@ -1130,7 +1130,18 @@ describe('SocAuthService.siemAuthHeaders', () => {
 
     const headers = svc.siemAuthHeaders()
     expect(headers.Authorization).toBe('Bearer GK-1')
-    expect(headers.Cookie).toBe('D1N=waf-cookie')
+    const cookies = String(headers.Cookie).split('; ').sort()
+    // The gatekeeper session rides with the WAF cookie: SIEM's second gateway
+    // refuses a call that arrives without it.
+    expect(cookies).toEqual(['D1N=waf-cookie', 'gatekeeper_session=gk1'])
+  })
+
+  it('keeps the identity server\'s session off SIEM\'s host', async () => {
+    const f = stubFetchSiem([json(200, { access_token: 'GK-1', token_type: 'Bearer', expires_in: 3600 })])
+    const svc = makeSiemService(f)
+    await svc.login(OTP)
+    await svc.siemToken()
+    expect(String(svc.siemAuthHeaders().Cookie)).not.toContain('commonAuthId')
   })
 
   it('returns no Authorization until a token has been fetched', async () => {

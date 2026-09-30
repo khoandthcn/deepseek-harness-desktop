@@ -189,6 +189,13 @@ describe('authenticated happy paths', () => {
     expect(out).toMatchObject({ total: 3, truncated: false, groups: [{ value: 'R1', count: 2 }, { value: 'R2', count: 1 }] })
   })
 
+  it('soar_group_alerts refuses an open-ended period, which would read every alert ever kept', async () => {
+    const { adapter, byName } = defs(true)
+    await expect(byName('soar_group_alerts').execute({ field: 'severity', top: 5 })).rejects.toThrow(/needs a period/)
+    await expect(byName('soar_group_alerts').execute({ field: 'severity', created_from: 10 })).rejects.toThrow(/needs a period/)
+    expect(adapter.groupAlerts).not.toHaveBeenCalled()
+  })
+
   it('soar_group_alerts takes one field name, not an expression', async () => {
     const { adapter, byName } = defs(true)
     await expect(byName('soar_group_alerts').execute({ field: 'rule_id, hostname' })).rejects.toThrow(/name of one alert field/)

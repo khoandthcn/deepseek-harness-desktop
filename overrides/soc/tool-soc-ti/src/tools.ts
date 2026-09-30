@@ -183,9 +183,24 @@ export function parseTiSearch(payload: unknown, what: string): TiSearchResult {
     throw new TiContractError(`Expected a TI ${what} object, got ${describe(payload)}`)
   }
   const obj = payload as Record<string, unknown>
-  const rows = obj.data ?? obj.alerts
+  const found = obj.data ?? obj.alerts
+  // Several endpoints answer an empty result as `data: null` beside `total: 0`
+  // rather than as an empty list. That is "nothing found", not a broken reply,
+  // and must not read as an error.
+  if ((found === null || found === undefined) && obj.total === 0) {
+    return { total: 0, returned: 0, rows: [] }
+  }
+  // Others wrap the list one level down.
+  const nested = typeof found === 'object' && found !== null && !Array.isArray(found)
+    ? Object.values(found as Record<string, unknown>).find(value => Array.isArray(value))
+    : undefined
+  const rows = Array.isArray(found) ? found : nested
   if (!Array.isArray(rows)) {
-    throw new TiContractError(`TI ${what} returned no \`data\` array (keys: ${Object.keys(obj).join(', ')})`)
+    const message = typeof obj.message === 'string' ? `; the platform said: ${obj.message}` : ''
+    throw new TiContractError(
+      `TI ${what} returned no list of results: \`data\` is ${found === null ? 'null' : typeof found} `
+      + `with total ${String(obj.total)}${message}`,
+    )
   }
   const total = typeof obj.total === 'number' ? obj.total : rows.length
   return { total, returned: rows.length, rows }

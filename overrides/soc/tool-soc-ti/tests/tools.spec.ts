@@ -120,9 +120,21 @@ describe('the shared alert search', () => {
     expect(body).toMatchObject({ time_from: 1000, time_to: 2000, size: TI_MAX_SIZE, from: 40 })
   })
 
-  it('reports a payload that carries no rows, naming the keys it got', async () => {
+  it('reports a payload that carries no rows, with what the platform said', async () => {
     const { byName } = defs(true, { [TI_PATHS.impersonate]: { message: 'quota exceeded' } })
-    await expect(byName('ti_search_impersonations').execute({})).rejects.toThrow(/no `data` array.*message/)
+    await expect(byName('ti_search_impersonations').execute({}))
+      .rejects.toThrow(/no list of results: `data` is undefined with total undefined; the platform said: quota exceeded/)
+  })
+
+  it('reads an empty result as empty, not as a broken reply', async () => {
+    // Several endpoints answer "nothing found" as `data: null` beside `total: 0`.
+    const { byName } = defs(true, { [TI_PATHS.impersonate]: { message: 'ok', total: 0, data: null } })
+    expect(await byName('ti_search_impersonations').execute({})).toEqual({ total: 0, returned: 0, rows: [] })
+  })
+
+  it('finds the rows when the platform wraps them one level down', async () => {
+    const { byName } = defs(true, { [TI_PATHS.impersonate]: { message: 'ok', total: 2, data: { items: [{ id: 1 }, { id: 2 }] } } })
+    expect(await byName('ti_search_impersonations').execute({})).toEqual({ total: 2, returned: 2, rows: [{ id: 1 }, { id: 2 }] })
   })
 })
 

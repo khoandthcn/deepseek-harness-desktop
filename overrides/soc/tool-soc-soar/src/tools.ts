@@ -168,7 +168,9 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
     {
       name: 'soar_search_alerts',
       description:
-        'Search SOAR alerts. Use it to answer questions about detections: how many high-severity'
+        'Search SOAR alerts. Give a period (`created_from`/`created_to`) and a `tenant` whenever you'
+        + ' can: the platform keeps millions of alerts and an unbounded search is slow. Use it to'
+        + ' answer questions about detections: how many high-severity'
         + ' alerts are open, what fired on a host, what arrived in a time window. Filters combine'
         + ' with AND; `query` is a raw xtext expression for anything the named filters cannot'
         + ' express.'
@@ -218,7 +220,8 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
         + ' soar_search_alerts: a page is a sample, not the period. The result gives `total`,'
         + ' `groups` (largest first) and `missing` (alerts without the field); if `truncated` is'
         + ' true the scan stopped at `scanned` alerts and the counts are incomplete — narrow the'
-        + ' filters and say so. Reads 500 alerts per request, so a busy month takes a while.'
+        + ' filters and say so. `created_from` and `created_to` are required, and a `tenant` makes it'
+        + ' far faster: it reads 500 alerts per request, so keep the period as short as the question allows.'
         + SOAR_NOTES,
       parameters: {
         field: { type: 'string', description: 'The alert field to group by, e.g. "rule_id". Check names with soar_list_alert_fields.' },
@@ -243,6 +246,15 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
       execute: guarded(async (args) => {
         if (typeof args.field !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(args.field)) {
           throw new Error('field must be the name of one alert field, e.g. "rule_id".')
+        }
+        // Without a period this reads every alert the platform has ever kept —
+        // millions — and the first request alone times out at the gateway.
+        if (typeof args.created_from !== 'number' || typeof args.created_to !== 'number') {
+          throw new Error(
+            'soar_group_alerts needs a period: give created_from and created_to in epoch milliseconds'
+            + ' (and a tenant where you can). It reads every matching alert, so an open-ended grouping'
+            + ' would read millions and time out.',
+          )
         }
         return adapter.groupAlerts({
           field: args.field,

@@ -19,6 +19,24 @@ export interface SocHttpOptions {
   d1nCookie?: string | undefined
 }
 
+/**
+ * What an upstream said when it refused, fit to quote in an error: credentials
+ * blanked, whitespace collapsed, cut short. Without it a failure is a bare
+ * status code, and the body is usually the only thing that says why — which
+ * field a 400 objects to, which check a gateway applied.
+ * @param text - the raw response body.
+ * @returns the quotable form, or a note that there was none.
+ */
+export function describeRefusal(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat === '') return 'no response body'
+  const safe = flat
+    .replace(/("(?:[a-z_]*token|password|secret|otp|code|session[a-z_]*)"\s*:\s*")[^"]*"/gi, '$1…"')
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/g, '$1 …')
+    .replace(/[A-Za-z0-9._~+/=-]{40,}/g, '…')
+  return `body: ${safe.length > 300 ? `${safe.slice(0, 300)}…` : safe}`
+}
+
 /** Marks a POST that carries no body, as distinct from one carrying `{}`. */
 const EMPTY_BODY: unique symbol = Symbol('empty body')
 
@@ -73,6 +91,15 @@ export class SocHttp {
       accept: 'application/json',
     }
     if (hasBody) headers['content-type'] = 'application/json'
+    // What a page served by this host sends with every call to it. The back
+    // ends are written for that page: a CSRF check reads the referer, a gateway
+    // may read the origin, and a request carrying neither is refused with a
+    // status that names no reason.
+    const origin = originOf(this.resolveBaseUrl())
+    if (origin !== undefined) {
+      headers.origin = origin
+      headers.referer = `${origin}/`
+    }
     if (this.authHeaders) Object.assign(headers, this.authHeaders())
     if (this.d1nCookie) {
       // The auth headers carry the session as `Cookie`; a second key differing
@@ -119,7 +146,7 @@ export class SocHttp {
 
     if (!res.ok) {
       const parsed = safeJson(text)
-      const detail = `${method} ${path} failed with ${res.status}`
+      const detail = `${method} ${path} failed with ${res.status} (${describeRefusal(text)})`
       if (res.status === 401 || res.status === 403) {
         throw new SocAuthError(detail, { status: res.status, body: parsed ?? text })
       }
@@ -143,6 +170,15 @@ export class SocHttp {
       )
     }
     return parsed as T
+  }
+}
+
+/** The origin of a base URL, or undefined when it is not yet configured. */
+function originOf(baseUrl: string): string | undefined {
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return undefined
   }
 }
 
