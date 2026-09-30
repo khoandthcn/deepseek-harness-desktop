@@ -19,14 +19,14 @@ Two habits make the difference between an exact report and an approximate one:
 
 | Figure in `data.json` | How to get it | Record in `sources[...]`.ref |
 |---|---|---|
-| `tier1.alert_total` | `soar_search_alerts` with `created_from: FROM`, `created_to: TO`, tenant filter in `query`, `size: 1` → `count` | the tool, the bounds, the tenant filter |
-| `tier1.by_level` | one `soar_search_alerts` count per severity (`severity: ...`, same bounds and tenant). Rows `{name, count}`, most severe first | each call |
-| `tier1.by_solution` | one count per source solution (SIEM, EDR, NSM), filtering the alert's source field in `query` | the field name and each value |
-| `tier1.by_category` | one count per attack category present in the month; list the categories with `soar_list_alert_types` | the field name and each value |
-| `tier1.top_rules` (5) | needs the month's alerts grouped by rule. Use a grouping tool if the platform offers one; otherwise ask the user for the list. Then confirm each of the five with a count query. `{rule_id, description, count}` | how the grouping was obtained, and the confirming counts |
-| `tier1.top_objects` (10) | as above, grouped by the alert's object (host or address). `{object, count}` | as above |
-| `tier2.tickets_total` | `soar_search_tickets` for the tenant's tickets created in the period, `size: 1` → `count` | the call and its query |
-| `tier3.cases_total` | `soar_search_cases` with `created_from: FROM`, `created_to: TO`, tenant filter in `query`, `size: 1` → `count`. A case is not a ticket: never count tickets here | the call, the bounds, the tenant filter |
+| `tier1.alert_total` | `soar_search_alerts` with `created_from: FROM`, `created_to: TO`, `tenant: TENANT`, `size: 1` → `count` | the tool, the bounds, the tenant |
+| `tier1.by_level` | `soar_group_alerts` with `field: "severity"`, same bounds and tenant → `groups`. Rows `{name, count}`, most severe first | the call |
+| `tier1.by_solution` | `soar_group_alerts` with `field: "source"` → `groups` | the call and the field |
+| `tier1.by_category` | `soar_group_alerts` with `field: "category"` → `groups` | the call and the field |
+| `tier1.top_rules` (5) | `soar_group_alerts` with `field: "rule_id"`, `top: 5` → `groups`. The description of each rule comes from one alert of that rule (`soar_search_alerts` with `query: 'rule_id = "..."'`, `size: 1`) or from `siem_search_rules`. `{rule_id, description, count}` | the grouping call, and where each description came from |
+| `tier1.top_objects` (10) | `soar_group_alerts` with `field: "hostname"` (or the object field the deployment uses), `top: 10` → `groups`. `{object, count}` | the call and the field |
+| `tier2.tickets_total` | `soar_search_tickets` with `created_from: FROM`, `created_to: TO`, `tenant: TENANT`, `size: 1` → `count` | the call |
+| `tier3.cases_total` | `soar_search_cases` with `created_from: FROM`, `created_to: TO`, `tenant: TENANT`, `size: 1` → `count`. A case is not a ticket: never count tickets here | the call |
 | `coverage.edr` | `edr_search_agents` with a `query` that selects the tenant (find the tenant and status fields in a returned agent first): read `total` for all agents, for online, for offline → `{installed, online, offline}` | the three calls and their queries |
 | `appendix_edr_offline` | `edr_search_agents` for the tenant's offline agents, raising `limit` or paging with `since` until the rows listed equal the offline total: `{hostname, os, last_ping, ip, status}` | the call and how many rows came back |
 | `coverage.siem` | `siem_search_agents` with `active: "1"` then `active: "0"`, keeping only the report tenant's agents → `{installed, online, offline}` | the calls, and how the tenant was selected |
@@ -41,6 +41,17 @@ not go into this customer's report.
 
 Each breakdown must sum to `tier1.alert_total`, online plus offline must equal installed, and each
 appendix must list exactly as many machines as are offline. `check` enforces all three.
+
+**Reading a grouping.** `soar_group_alerts` counts every matching alert, page by page, so its `total`
+must equal `tier1.alert_total`. Two things to check before using its `groups`:
+
+- `truncated: true` means it stopped at `scanned` alerts. The groups are then incomplete: do not use
+  them. Say so, and leave the figure `null`.
+- `missing` is the number of alerts with no value in that field. For a breakdown that has to sum to
+  the total, add them as a row named "Unclassified" — that row is real, the tool counted it.
+
+**EDR timestamps are epoch seconds**, unlike every other system. The EDR tools accept the millisecond
+bounds `period` prints and convert them.
 
 **Tickets and cases are different things.** The Tier 2 figures count tickets
 (`soar_search_tickets`); the Tier 3 figure counts cases (`soar_search_cases`). If the user's

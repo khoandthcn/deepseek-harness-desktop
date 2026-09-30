@@ -10,6 +10,11 @@ const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
 function fakeAdapter() {
   return {
     searchAlerts: vi.fn(async () => ({ count: 1, data: [{ _id: 1, severity: 'high' }] })),
+    groupAlerts: vi.fn(async () => ({
+      field: 'rule_id', total: 3, scanned: 3, truncated: false, distinct: 2, missing: 0,
+      groups: [{ value: 'R1', count: 2 }, { value: 'R2', count: 1 }],
+    })),
+    getAlertEvents: vi.fn(async () => ({ count: 3, data: [{ n: 1 }, { n: 2 }, { n: 3 }] })),
     listAlertTypes: vi.fn(async () => ({ count: 1, data: [{ _id: 2, name: 'phishing' }] })),
     listAlertFields: vi.fn(async () => ({ count: 1, data: [{ _id: 3, name: 'severity' }] })),
     searchCases: vi.fn(async () => ({ count: 1, data: [{ _id: 5, case_id: '240801_0001' }] })),
@@ -48,6 +53,8 @@ function defs(authenticated: boolean) {
 const EXPECTED = [
   'soc_login',
   'soar_search_alerts',
+  'soar_group_alerts',
+  'soar_get_alert_events',
   'soar_list_alert_types',
   'soar_list_alert_fields',
   'soar_search_cases',
@@ -160,6 +167,49 @@ describe('authenticated happy paths', () => {
     })
   })
 
+  it('keeps a search to one tenant when asked, on alerts, cases and tickets alike', async () => {
+    const { adapter, byName } = defs(true)
+    await byName('soar_search_alerts').execute({ tenant: 'acme', size: 1 })
+    await byName('soar_search_cases').execute({ tenant: 'acme', size: 1 })
+    await byName('soar_search_tickets').execute({ tenant: 'acme', created_from: 10, created_to: 20, size: 1 })
+    expect(callsOf(adapter.searchAlerts)[0]![0].tenant).toBe('acme')
+    expect(callsOf(adapter.searchCases)[0]![0].tenant).toBe('acme')
+    expect(callsOf(adapter.searchTickets)[0]![0]).toMatchObject({ tenant: 'acme', createdFrom: 10, createdTo: 20 })
+  })
+
+  it('soar_group_alerts groups the whole period for one tenant by the field asked for', async () => {
+    const { adapter, byName } = defs(true)
+    const out = await byName('soar_group_alerts').execute({
+      field: 'rule_id', top: 5, tenant: 'acme', created_from: 10, created_to: 20,
+    })
+    expect(adapter.groupAlerts).toHaveBeenCalledWith({
+      field: 'rule_id', top: 5, severity: undefined, status: undefined,
+      createdFrom: 10, createdTo: 20, tenant: 'acme', rawQuery: undefined,
+    })
+    expect(out).toMatchObject({ total: 3, truncated: false, groups: [{ value: 'R1', count: 2 }, { value: 'R2', count: 1 }] })
+  })
+
+  it('soar_group_alerts takes one field name, not an expression', async () => {
+    const { adapter, byName } = defs(true)
+    await expect(byName('soar_group_alerts').execute({ field: 'rule_id, hostname' })).rejects.toThrow(/name of one alert field/)
+    await expect(byName('soar_group_alerts').execute({})).rejects.toThrow(/name of one alert field/)
+    expect(adapter.groupAlerts).not.toHaveBeenCalled()
+  })
+
+  it('soar_get_alert_events takes the internal id and reports the full count beside a bounded page', async () => {
+    const { adapter, byName } = defs(true)
+    const out = await byName('soar_get_alert_events').execute({ alert_internal_id: 206899862, limit: 2 })
+    expect(adapter.getAlertEvents).toHaveBeenCalledWith(206899862)
+    expect(out).toEqual({ count: 3, returned: 2, data: [{ n: 1 }, { n: 2 }] })
+  })
+
+  it('soar_get_alert_events refuses the business alert id, which the endpoint does not accept', async () => {
+    const { adapter, byName } = defs(true)
+    await expect(byName('soar_get_alert_events').execute({ alert_internal_id: 'c0654630-32e2-4219-a071' }))
+      .rejects.toThrow(/numeric `_id`/)
+    expect(adapter.getAlertEvents).not.toHaveBeenCalled()
+  })
+
   it('soar_search_cases forwards the period, the raw query and paging to the case search', async () => {
     const { adapter, byName } = defs(true)
     const out = await byName('soar_search_cases').execute({
@@ -170,6 +220,7 @@ describe('authenticated happy paths', () => {
       status: undefined,
       createdFrom: 10,
       createdTo: 20,
+      tenant: undefined,
       rawQuery: 'tenant = "acme"',
       page: undefined,
       size: 1,

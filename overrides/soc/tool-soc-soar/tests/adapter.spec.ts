@@ -106,6 +106,74 @@ describe('SoarAdapter', () => {
     })
   })
 
+  it('never asks for more than the 500 records a page may hold', async () => {
+    const { http, soar } = adapter({
+      '/soarapi/v1/MASTER/alert/_search': { count: 0, data: [] },
+      '/soarapi/v1/MASTER/case/_search': { count: 0, data: [] },
+      '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 0, data: [] },
+    })
+    await soar.searchAlerts({ size: 5000, page: 2 })
+    await soar.searchCases({ size: 5000 })
+    await soar.searchTickets({ size: 5000 })
+    const bodies = callsOf(http.postJson).map(call => call[1] as Record<string, unknown>)
+    expect(bodies.map(body => body._size)).toEqual([500, 500, 500])
+    // and the offset follows the page size actually sent
+    expect(bodies[0]!._from).toBe(1000)
+  })
+
+  it('search_tickets filters by tenant and period like the other searches', async () => {
+    const { http, soar } = adapter({ '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 80, data: [] } })
+    const env = await soar.searchTickets({ tenant: 'acme', createdFrom: 10, createdTo: 20, rawQuery: 'assigned_group = "tier2"', size: 1 })
+    expect(env.count).toBe(80)
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(body.query).toBe('( assigned_group = "tier2" ) AND tenant = "acme" AND ( created >= 10 AND created <= 20 )')
+  })
+
+  it('get_alert_events reads the alert by its internal id, under its own scope', async () => {
+    const { http, soar } = adapter({
+      '/soarapi/v1/MASTER/alert/206899862/artifact_event': { data: [{ _alert_id: 206899862, action: 'x' }] },
+    })
+    const events = await soar.getAlertEvents(206899862)
+    expect(events).toEqual({ count: 1, data: [{ _alert_id: 206899862, action: 'x' }] })
+    const [path, scope] = callsOf(http.getJson)[0] as [string, string]
+    expect(path).toBe('/soarapi/v1/MASTER/alert/206899862/artifact_event')
+    expect(scope).toBe('read:artifact_event')
+  })
+
+  it('group_alerts counts every matching alert across pages, not the first page', async () => {
+    // 1100 alerts: two full pages and a partial one. A ranking taken from the
+    // first page alone would put R-late nowhere; over the whole set it leads.
+    const rows = [
+      ...Array.from({ length: 300 }, () => ({ rule_id: 'R-early' })),
+      ...Array.from({ length: 700 }, () => ({ rule_id: 'R-late' })),
+      ...Array.from({ length: 90 }, () => ({ rule_id: ['R-early', 'R-multi'] })),
+      ...Array.from({ length: 10 }, () => ({ rule_id: '' })),
+    ]
+    const postJson = vi.fn(async (_path: string, body: any) => ({
+      count: rows.length, data: rows.slice(body._from, body._from + body._size),
+    }))
+    const soar = new SoarAdapter({ postJson, getJson: vi.fn() } as unknown as SoarHttp)
+    const out = await soar.groupAlerts({ field: 'rule_id', top: 2, tenant: 'acme', createdFrom: 10, createdTo: 20 })
+    expect(postJson).toHaveBeenCalledTimes(3)
+    expect(callsOf(postJson).map(call => call[1]._from)).toEqual([0, 500, 1000])
+    expect(callsOf(postJson)[0]![1]).toMatchObject({
+      _size: 500, _fields: 'rule_id', query: 'tenant = "acme" AND ( created >= 10 AND created <= 20 )',
+    })
+    expect(out).toEqual({
+      field: 'rule_id', total: 1100, scanned: 1100, truncated: false, distinct: 3, missing: 10,
+      groups: [{ value: 'R-late', count: 700 }, { value: 'R-early', count: 390 }],
+    })
+  })
+
+  it('group_alerts says so when the set changed under it and it could not read everything', async () => {
+    const postJson = vi.fn(async (_path: string, body: any) => ({
+      count: 900, data: body._from === 0 ? Array.from({ length: 500 }, () => ({ source: 'EDR' })) : [],
+    }))
+    const soar = new SoarAdapter({ postJson, getJson: vi.fn() } as unknown as SoarHttp)
+    const out = await soar.groupAlerts({ field: 'source' })
+    expect(out).toMatchObject({ total: 900, scanned: 500, truncated: true })
+  })
+
   it('search_tickets passes rawQuery through verbatim', async () => {
     const { http, soar } = adapter({
       '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 1, data: [{ _id: 7, status: 'OPEN' }] },

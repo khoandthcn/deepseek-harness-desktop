@@ -84,9 +84,10 @@ Speak to the user in their language. The report itself is in English, as the tem
 - A breakdown does not sum to the total: a bucket is missing, or the queries used different bounds.
   Find the missing bucket with a query that excludes the known ones. Do not add an "Other" row to
   close the gap unless a query returned it.
-- A top-5 or top-10 list needs grouping. If no tool can group alerts by a field for the whole month,
-  ask the user for the list (an export from the platform) and record it as theirs. A ranking built
-  from the first pages of results is not a ranking.
+- A top-5 or top-10 list, or a breakdown, comes from `soar_group_alerts`, which counts every alert of
+  the month. A ranking built from the rows of a search is not a ranking: a page is a sample. If the
+  grouping reports `truncated`, the month is too large to read in one go — split the period and add
+  the counts, or leave the figure `null` and say so.
 - A tool fails or a system is unreachable: leave its figures `null`, say which system, and offer a
   draft. Do not substitute another system's data.
 - The user wants different wording in a standard sentence: those sentences come from the renderer so

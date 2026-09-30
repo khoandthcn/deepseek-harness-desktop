@@ -38,6 +38,39 @@ function usesRelativeWindow(options: { fromTimestamp?: number | null | undefined
   return (options.fromTimestamp ?? 0) === 0 && (options.toTimestamp ?? 0) === 0
 }
 
+/** EDR returns at most this many records for one query, across all pages. */
+export const EDR_RESULT_WINDOW = 10000
+
+/**
+ * An EDR timestamp, which is epoch SECONDS. Every other system here speaks
+ * milliseconds, and a caller carrying a period from one of them will pass
+ * milliseconds; sent as they are, they name a date tens of thousands of years
+ * away and the search quietly returns nothing. Anything too large to be seconds
+ * is therefore read as milliseconds.
+ * @param value - seconds, or milliseconds.
+ * @returns epoch seconds, or 0 when no bound was given.
+ */
+export function edrSeconds(value: number | null | undefined): number {
+  if (value === null || value === undefined || value <= 0) return 0
+  return value >= 1e11 ? Math.floor(value / 1000) : Math.floor(value)
+}
+
+/**
+ * Refuse a page outside the result window before asking for it: EDR answers
+ * such a request with an error that does not say why.
+ * @param since - the offset asked for.
+ * @param limit - the page size asked for.
+ * @throws when the page would reach past the window.
+ */
+function assertWithinWindow(since: number, limit: number): void {
+  if (since + limit >= EDR_RESULT_WINDOW) {
+    throw new Error(
+      `EDR returns at most ${EDR_RESULT_WINDOW} records per query: since (${since}) + limit (${limit}) must stay `
+      + 'below that. Narrow the time window or the query instead of paging further.',
+    )
+  }
+}
+
 /** Sort shapes the EDR API expects (an object, not a string). */
 const EDR_EVENT_SORT = { field: 'TimeStamp', direction: 'desc' } as const
 const EDR_ALERT_SORT = { field: 'timestamp_create', direction: 'desc' } as const
@@ -45,6 +78,8 @@ const EDR_ALERT_SORT = { field: 'timestamp_create', direction: 'desc' } as const
 /** EDR API paths, read from the EDR SPA's route map. No tenant path segment. */
 export const EDR_PATHS = {
   eventSearch: '/eventHandler/Search',
+  eventsByAlert: '/eventHandler/GetEventByAlertIds',
+  agentInfo: '/agentManagement/QueryAgentInfoExtended',
   eventFields: '/eventHandler/GetEventFieldList',
   alertSearch: '/msalert/Search',
   alertFields: '/msalert/GetAlertFieldList',
@@ -58,11 +93,11 @@ export interface SearchOptions {
   searchQuery?: string | null | undefined
   /** A relative time window, in seconds (e.g. the last 3600s). */
   lastSeconds?: number | null | undefined
-  /** Absolute window start, epoch milliseconds. */
+  /** Absolute window start, epoch seconds (milliseconds are converted). */
   fromTimestamp?: number | null | undefined
-  /** Absolute window end, epoch milliseconds. */
+  /** Absolute window end, epoch seconds (milliseconds are converted). */
   toTimestamp?: number | null | undefined
-  /** A `since` cursor, epoch milliseconds. */
+  /** Zero-based offset of the first record to return. */
   since?: number | null | undefined
   sort?: { field: string, direction: string } | undefined
   limit?: number | undefined
@@ -95,6 +130,7 @@ export class EdrAdapter {
 
   async searchEvents(options: SearchEventsOptions = {}): Promise<EdrSearchEnvelope<EdrEvent>> {
     const { limit = 50, sort = EDR_EVENT_SORT } = options
+    assertWithinWindow(options.since ?? 0, limit)
     const body = {
       // The flag picks which window the API reads: with it set, the absolute
       // bounds this call also carries would be ignored.
@@ -104,8 +140,8 @@ export class EdrAdapter {
       since: options.since ?? 0,
       sort,
       limit,
-      from_timestamp: options.fromTimestamp ?? 0,
-      to_timestamp: options.toTimestamp ?? 0,
+      from_timestamp: edrSeconds(options.fromTimestamp),
+      to_timestamp: edrSeconds(options.toTimestamp),
       search_query_str: options.searchQuery ?? '',
     }
     const data = await this.http.postJson(EDR_PATHS.eventSearch, body)
@@ -114,14 +150,15 @@ export class EdrAdapter {
 
   async searchAlerts(options: SearchAlertsOptions = {}): Promise<EdrSearchEnvelope<EdrAlert>> {
     const { limit = 50, sort = EDR_ALERT_SORT } = options
+    assertWithinWindow(options.since ?? 0, limit)
     const body = {
       search_query_str: options.searchQuery ?? '',
       since: options.since ?? 0,
       limit,
       sort,
       last_seconds: options.lastSeconds ?? EDR_DEFAULT_WINDOW_SECONDS,
-      from_timestamp: options.fromTimestamp ?? 0,
-      to_timestamp: options.toTimestamp ?? 0,
+      from_timestamp: edrSeconds(options.fromTimestamp),
+      to_timestamp: edrSeconds(options.toTimestamp),
       is_use_last_seconds: usesRelativeWindow(options),
     }
     const data = await this.http.postJson(EDR_PATHS.alertSearch, body)
@@ -137,6 +174,36 @@ export class EdrAdapter {
     }
     const data = await this.http.postJson(EDR_PATHS.agentSearch, body)
     return parseEdrSearchEnvelope<EdrAgent>(data, 'agent_infos')
+  }
+
+  /**
+   * Detailed information for the named agents.
+   * @param agentIds - the agent ids to look up.
+   * @param infos - which blocks of information to return; EDR's default set when omitted.
+   */
+  async getAgents(agentIds: string[], infos?: string[] | undefined): Promise<EdrSearchEnvelope<EdrAgent>> {
+    const body: Record<string, unknown> = { agents: agentIds }
+    if (infos !== undefined && infos.length > 0) body.infos = infos
+    const data = await this.http.postJson(EDR_PATHS.agentInfo, body)
+    return parseEdrSearchEnvelope<EdrAgent>(data, 'agent_infos')
+  }
+
+  /**
+   * The events behind one or more alerts, keyed by alert id.
+   * @param alertIds - the alert ids to expand.
+   * @param direction - order of each alert's events by creation time.
+   */
+  async getAlertEvents(alertIds: string[], direction: 'asc' | 'desc' = 'desc'): Promise<Record<string, EdrEvent[]>> {
+    const data = await this.http.postJson(EDR_PATHS.eventsByAlert, {
+      alert_ids: alertIds,
+      sort_event_time_create_direction: direction,
+    })
+    const events = (data as { data?: unknown } | null)?.data
+    if (typeof events !== 'object' || events === null || Array.isArray(events)) {
+      const message = (data as { message?: unknown } | null)?.message
+      throw new Error(`EDR returned no events object for the alerts${typeof message === 'string' ? `: ${message}` : ''}`)
+    }
+    return events as Record<string, EdrEvent[]>
   }
 
   async threatHuntingHistory(options: HuntingHistoryOptions = {}): Promise<EdrSearchEnvelope<EdrHuntingEntry>> {

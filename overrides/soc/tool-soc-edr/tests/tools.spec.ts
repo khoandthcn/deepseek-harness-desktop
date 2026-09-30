@@ -6,12 +6,14 @@ import { createEdrToolDefs } from '../src/tools.ts'
 const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
   m.mock.calls as unknown as any[][]
 
-/** The six adapter methods the tools call, all as spies. */
+/** The adapter methods the tools call, all as spies. */
 function fakeAdapter() {
   return {
     searchEvents: vi.fn(async () => ({ total: 1, items: [{ _id: 'e1' }] })),
     searchAlerts: vi.fn(async () => ({ total: 1, items: [{ alert_id: 'a1' }] })),
     searchAgents: vi.fn(async () => ({ total: 1, items: [{ agent_id: 'ag1' }] })),
+    getAgents: vi.fn(async () => ({ total: 1, items: [{ agentId: 'ag1', policy: 'alpha' }] })),
+    getAlertEvents: vi.fn(async () => ({ a1: [{ EventID: 3 }] })),
     threatHuntingHistory: vi.fn(async () => ({ total: 1, items: [{ _id: 'h1' }] })),
     listEventFields: vi.fn(async () => ({ fields: { process_name: {} } })),
     listAlertFields: vi.fn(async () => ({ fields: { severity: {} } })),
@@ -39,13 +41,15 @@ const EXPECTED = [
   'edr_search_events',
   'edr_search_alerts',
   'edr_search_agents',
+  'edr_get_agents',
+  'edr_get_alert_events',
   'edr_threat_hunting_history',
   'edr_list_event_fields',
   'edr_list_alert_fields',
 ]
 
 describe('createEdrToolDefs', () => {
-  it('defines exactly the six expected edr_* tools', () => {
+  it('defines exactly the expected edr_* tools', () => {
     const { list } = defs(true)
     expect(list.map(d => d.name).sort()).toEqual([...EXPECTED].sort())
   })
@@ -133,8 +137,38 @@ describe('authenticated happy paths', () => {
       fromTimestamp: undefined,
       toTimestamp: undefined,
       limit: 10,
+      since: undefined,
       sort: undefined,
     })
+  })
+
+  it('pages a search with since, the offset of the first record', async () => {
+    const { adapter, byName } = defs(true)
+    await byName('edr_search_alerts').execute({ since: 500, limit: 100 })
+    expect(callsOf(adapter.searchAlerts)[0]![0]).toMatchObject({ since: 500, limit: 100 })
+  })
+
+  it('edr_get_agents looks agents up by id, and takes one bare id for a list of one', async () => {
+    const { adapter, byName } = defs(true)
+    await byName('edr_get_agents').execute({ agent_ids: ['A1', 'A2'], infos: ['policy', 'ip'] })
+    expect(adapter.getAgents).toHaveBeenCalledWith(['A1', 'A2'], ['policy', 'ip'])
+    await byName('edr_get_agents').execute({ agent_ids: 'A3' })
+    expect(adapter.getAgents).toHaveBeenLastCalledWith(['A3'], undefined)
+  })
+
+  it('edr_get_agents refuses an empty id list rather than asking for every agent', async () => {
+    const { adapter, byName } = defs(true)
+    await expect(byName('edr_get_agents').execute({ agent_ids: [] })).rejects.toThrow(/agent_ids must be a non-empty array/)
+    expect(adapter.getAgents).not.toHaveBeenCalled()
+  })
+
+  it('edr_get_alert_events expands alerts into their events, newest first unless asked', async () => {
+    const { adapter, byName } = defs(true)
+    const out = await byName('edr_get_alert_events').execute({ alert_ids: ['a1'] })
+    expect(adapter.getAlertEvents).toHaveBeenCalledWith(['a1'], 'desc')
+    expect(out).toEqual({ a1: [{ EventID: 3 }] })
+    await byName('edr_get_alert_events').execute({ alert_ids: ['a1'], direction: 'asc' })
+    expect(adapter.getAlertEvents).toHaveBeenLastCalledWith(['a1'], 'asc')
   })
 
   it('edr_search_agents forwards query/since/limit', async () => {

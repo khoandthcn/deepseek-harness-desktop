@@ -37,6 +37,12 @@ describe('buildAlertQuery', () => {
       .toBe('( custom = 1 ) AND severity = "high"')
   })
 
+  it('keeps a search to one tenant, quoting the name', () => {
+    expect(buildAlertQuery({ tenant: 'acme', createdFrom: 10, createdTo: 20 }))
+      .toBe('tenant = "acme" AND ( created >= 10 AND created <= 20 )')
+    expect(buildAlertQuery({ tenant: 'a"b' })).toBe('tenant = "a\\"b"')
+  })
+
   it('parenthesises a raw query so an OR inside it cannot escape the period', () => {
     expect(buildAlertQuery({ rawQuery: 'a = 1 OR b = 2', createdFrom: 10 }))
       .toBe('( a = 1 OR b = 2 ) AND created >= 10')

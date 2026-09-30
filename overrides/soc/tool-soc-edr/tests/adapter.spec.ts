@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { EdrAdapter, EDR_PATHS, type EdrHttp } from '../src/adapter.ts'
+import { EdrAdapter, EDR_PATHS, edrSeconds, type EdrHttp } from '../src/adapter.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
  * positional args the stubs do not declare, so narrow once here. */
@@ -86,6 +86,57 @@ describe('EdrAdapter', () => {
     expect(body.is_use_last_seconds).toBe(false)
     expect(body.from_timestamp).toBe(1000)
     expect(body.to_timestamp).toBe(2000)
+  })
+
+  it('sends the window in epoch seconds, converting a millisecond value', async () => {
+    // EDR speaks seconds while every other system here speaks milliseconds. A
+    // millisecond bound sent as it is names a date far in the future and the
+    // search returns nothing, with no error to say why.
+    const { http, edr } = adapter({ [EDR_PATHS.alertSearch]: { total: 0, data: [] } })
+    await edr.searchAlerts({ fromTimestamp: 1722445200000, toTimestamp: 1725123599 })
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(body.from_timestamp).toBe(1722445200)
+    expect(body.to_timestamp).toBe(1725123599)
+    expect(body.is_use_last_seconds).toBe(false)
+    expect(edrSeconds(undefined)).toBe(0)
+  })
+
+  it('refuses a page past the 10000-record window before asking for it', async () => {
+    const { http, edr } = adapter({ [EDR_PATHS.alertSearch]: { total: 0, data: [] } })
+    await expect(edr.searchAlerts({ since: 9950, limit: 50 })).rejects.toThrow(/at most 10000 records/)
+    await expect(edr.searchEvents({ since: 9950, limit: 50 })).rejects.toThrow(/at most 10000 records/)
+    expect(http.postJson).not.toHaveBeenCalled()
+    await edr.searchAlerts({ since: 9900, limit: 50 })
+    expect(http.postJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('get_agents asks for the named agents and only the blocks requested', async () => {
+    const { http, edr } = adapter({
+      [EDR_PATHS.agentInfo]: { success: true, agent_infos: [{ agentId: 'A1', policy: 'alpha', online: false }] },
+    })
+    const env = await edr.getAgents(['A1'], ['policy'])
+    expect(env.items[0]!.agentId).toBe('A1')
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(path).toBe('/agentManagement/QueryAgentInfoExtended')
+    expect(body).toEqual({ agents: ['A1'], infos: ['policy'] })
+    await edr.getAgents(['A1'])
+    expect(callsOf(http.postJson)[1]![1]).toEqual({ agents: ['A1'] })
+  })
+
+  it('get_alert_events returns the events grouped by alert id', async () => {
+    const { http, edr } = adapter({
+      [EDR_PATHS.eventsByAlert]: { status: 'successed', data: { a1: [{ EventID: 23 }, { EventID: 3 }] } },
+    })
+    const events = await edr.getAlertEvents(['a1'], 'asc')
+    expect(events.a1).toHaveLength(2)
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(path).toBe('/eventHandler/GetEventByAlertIds')
+    expect(body).toEqual({ alert_ids: ['a1'], sort_event_time_create_direction: 'asc' })
+  })
+
+  it('get_alert_events reports a failure instead of returning nothing', async () => {
+    const { edr } = adapter({ [EDR_PATHS.eventsByAlert]: { status: 'failed', message: 'alert not found' } })
+    await expect(edr.getAlertEvents(['nope'])).rejects.toThrow(/alert not found/)
   })
 
   it('search_agents parses agent_infos/total', async () => {

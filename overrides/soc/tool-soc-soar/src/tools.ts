@@ -14,15 +14,19 @@
  */
 
 import type {
+  GroupAlertsOptions,
   ListNotificationsOptions,
   PageOptions,
   SearchAlertsOptions,
-  SearchCasesOptions, SearchTicketsOptions,
+  SearchCasesOptions,
+  SearchTicketsOptions,
 } from './adapter.ts'
 
 /** The adapter surface the tools drive; `SoarAdapter` satisfies it structurally. */
 export interface SoarAdapterLike {
   searchAlerts(options: SearchAlertsOptions): Promise<unknown>
+  groupAlerts(options: GroupAlertsOptions): Promise<unknown>
+  getAlertEvents(alertInternalId: number): Promise<{ count: number, data: Record<string, unknown>[] }>
   listAlertTypes(options: PageOptions): Promise<unknown>
   listAlertFields(options: PageOptions): Promise<unknown>
   searchCases(options: SearchCasesOptions): Promise<unknown>
@@ -91,8 +95,13 @@ export const NOT_AUTHENTICATED = {
  */
 const SOAR_NOTES =
   ' Notes: all SOAR timestamps are epoch MILLISECONDS (not seconds) — 1780718815823, never 1780718815.'
-  + ' Results are scoped to one tenant, so include the tenant in any query you write when the'
-  + ' deployment serves more than one.'
+  + ' A deployment serves many tenants (customers): pass `tenant` to keep to one, and leave it out'
+  + ' only when every tenant the account can see is wanted.'
+  + ' `query` is SOAR\'s own language: `field = "value"`, `field >= number`, `AND`/`OR` with'
+  + ' parentheses, and `field = IN(["a", "b"])` for several values; it is ANDed with the other'
+  + ' filters. Status values include "open", "in progress" and "close"; severities are "low",'
+  + ' "medium", "high", "critical". A page holds at most 500 records; the total matching the'
+  + ' filters is `count`, so to count, ask for `size: 1` and read it.'
   + ' Two different ids exist: `case_id` is the human-readable per-tenant id a user will quote'
   + ' (e.g. "260608_0001"), while `_id` is the globally unique internal id — match whichever the'
   + ' user gave you, and quote `case_id` back to them.'
@@ -175,6 +184,10 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
           type: 'integer',
           description: 'Only alerts created at or before this time, in epoch MILLISECONDS.',
         },
+        tenant: {
+          type: 'string',
+          description: 'Only records of this tenant (customer), e.g. "acme". Omit for every tenant visible to the account.',
+        },
         query: {
           type: 'string',
           description:
@@ -189,11 +202,81 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
         status: args.status,
         createdFrom: args.created_from,
         createdTo: args.created_to,
+        tenant: args.tenant,
         rawQuery: args.query,
         page: args.page,
         size: args.size,
         sort: args.sort ?? '-created',
       })),
+    },
+    {
+      name: 'soar_group_alerts',
+      description:
+        'Count SOAR alerts by the value of one field, over EVERY alert the filters match — the way to'
+        + ' get a ranking or a breakdown: alerts per rule (`rule_id`), per host (`hostname`), per'
+        + ' source solution (`source`), per category, per severity. Never rank from the rows of'
+        + ' soar_search_alerts: a page is a sample, not the period. The result gives `total`,'
+        + ' `groups` (largest first) and `missing` (alerts without the field); if `truncated` is'
+        + ' true the scan stopped at `scanned` alerts and the counts are incomplete — narrow the'
+        + ' filters and say so. Reads 500 alerts per request, so a busy month takes a while.'
+        + SOAR_NOTES,
+      parameters: {
+        field: { type: 'string', description: 'The alert field to group by, e.g. "rule_id". Check names with soar_list_alert_fields.' },
+        top: { type: 'integer', description: 'How many of the largest groups to return, 1-100. Defaults to 10.' },
+        severity: { type: 'string', description: 'Alert severity, e.g. "high".' },
+        status: { type: 'string', description: 'Alert status, e.g. "open".' },
+        created_from: {
+          type: 'integer',
+          description: 'Only alerts created at or after this time, in epoch MILLISECONDS.',
+        },
+        created_to: {
+          type: 'integer',
+          description: 'Only alerts created at or before this time, in epoch MILLISECONDS.',
+        },
+        tenant: {
+          type: 'string',
+          description: 'Only records of this tenant (customer), e.g. "acme". Omit for every tenant visible to the account.',
+        },
+        query: { type: 'string', description: 'Raw SOAR xtext query, ANDed with the other filters.' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(async (args) => {
+        if (typeof args.field !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(args.field)) {
+          throw new Error('field must be the name of one alert field, e.g. "rule_id".')
+        }
+        return adapter.groupAlerts({
+          field: args.field,
+          top: args.top,
+          severity: args.severity,
+          status: args.status,
+          createdFrom: args.created_from,
+          createdTo: args.created_to,
+          tenant: args.tenant,
+          rawQuery: args.query,
+        })
+      }),
+    },
+    {
+      name: 'soar_get_alert_events',
+      description:
+        'Get the events a SOAR alert was raised on: the underlying log or telemetry records with'
+        + ' their process, network, user and file fields. Use it to see what actually happened behind'
+        + ' an alert. It takes the alert\'s internal `_id` (a number, from soar_search_alerts), not'
+        + ' its `alert_id`.',
+      parameters: {
+        alert_internal_id: { type: 'integer', description: 'The alert\'s `_id`, e.g. 206899862.' },
+        limit: { type: 'integer', description: 'Events to return, 1-200. Defaults to 20; `count` is always the full number.' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(async (args) => {
+        const id = Number(args.alert_internal_id)
+        if (!Number.isInteger(id) || id <= 0) {
+          throw new Error('alert_internal_id must be the alert\'s numeric `_id`, not its `alert_id`.')
+        }
+        const events = await adapter.getAlertEvents(id)
+        const limit = Math.min(Math.max(1, Math.floor(Number(args.limit) || 20)), 200)
+        return { count: events.count, returned: Math.min(limit, events.count), data: events.data.slice(0, limit) }
+      }),
     },
     {
       name: 'soar_list_alert_types',
@@ -238,9 +321,13 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
           type: 'integer',
           description: 'Only cases created at or before this time, in epoch MILLISECONDS.',
         },
+        tenant: {
+          type: 'string',
+          description: 'Only records of this tenant (customer), e.g. "acme". Omit for every tenant visible to the account.',
+        },
         query: {
           type: 'string',
-          description: 'Raw SOAR xtext query, ANDed with the other filters, e.g. \'tenant = "acme"\'.',
+          description: 'Raw SOAR xtext query, ANDed with the other filters, e.g. \'type = "incident"\'.',
         },
         ...paging,
         sort: { type: 'string', description: 'Sort field; prefix with "-" for descending. Defaults to "-created".' },
@@ -251,6 +338,7 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
         status: args.status,
         createdFrom: args.created_from,
         createdTo: args.created_to,
+        tenant: args.tenant,
         rawQuery: args.query,
         page: args.page,
         size: args.size,
@@ -268,15 +356,34 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
         + ' "tier3") and `sla_expired` (true once the ticket missed its SLA).'
         + SOAR_NOTES,
       parameters: {
+        severity: { type: 'string', description: 'Ticket severity, e.g. "high".' },
+        status: { type: 'string', description: 'Ticket status, e.g. "open".' },
+        created_from: {
+          type: 'integer',
+          description: 'Only tickets created at or after this time, in epoch MILLISECONDS.',
+        },
+        created_to: {
+          type: 'integer',
+          description: 'Only tickets created at or before this time, in epoch MILLISECONDS.',
+        },
+        tenant: {
+          type: 'string',
+          description: 'Only records of this tenant (customer), e.g. "acme". Omit for every tenant visible to the account.',
+        },
         query: {
           type: 'string',
-          description: 'Raw SOAR xtext query, e.g. \'status = "OPEN"\'.',
+          description: 'Raw SOAR xtext query, ANDed with the other filters, e.g. \'assigned_group = "tier2"\'.',
         },
         ...paging,
         sort: { type: 'string', description: 'Sort field; prefix with "-" for descending. Defaults to "-created".' },
       },
       output: JSON_OUTPUT,
       execute: guarded(args => adapter.searchTickets({
+        severity: args.severity,
+        status: args.status,
+        createdFrom: args.created_from,
+        createdTo: args.created_to,
+        tenant: args.tenant,
         rawQuery: args.query,
         page: args.page,
         size: args.size,

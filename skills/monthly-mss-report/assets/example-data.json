@@ -222,31 +222,31 @@
   "sources": {
     "tier1.alert_total": {
       "by": "tool",
-      "ref": "soar_search_alerts created_from=1722445200000 created_to=1725123599999 query='tenant = \"acme\"' size=1 -> count 1709"
+      "ref": "soar_search_alerts created_from=1722445200000 created_to=1725123599999 tenant=acme size=1 -> count 1709"
     },
     "tier1.by_level": {
       "by": "tool",
-      "ref": "soar_search_alerts, same bounds and tenant, one call per severity: critical 39, high 210, medium 1460"
+      "ref": "soar_group_alerts field=severity created_from=1722445200000 created_to=1725123599999 tenant=acme -> total 1709, truncated false"
     },
     "tier1.by_solution": {
       "by": "tool",
-      "ref": "soar_search_alerts, same bounds and tenant, one call per value of the alert source field: EDR 1095, SIEM 550, NSM 64"
+      "ref": "soar_group_alerts field=source created_from=1722445200000 created_to=1725123599999 tenant=acme -> total 1709, truncated false"
     },
     "tier1.by_category": {
       "by": "tool",
-      "ref": "soar_search_alerts, same bounds and tenant, one call per alert category: 1633, 55, 21"
+      "ref": "soar_group_alerts field=category created_from=1722445200000 created_to=1725123599999 tenant=acme -> total 1709, truncated false"
     },
     "tier1.top_rules": {
-      "by": "user",
-      "ref": "user supplied the month's top rules from the platform export; each confirmed by a count query"
+      "by": "tool",
+      "ref": "soar_group_alerts field=rule_id top=5 created_from=1722445200000 created_to=1725123599999 tenant=acme; descriptions from one alert of each rule"
     },
     "tier1.top_objects": {
-      "by": "user",
-      "ref": "user supplied the month's top objects from the platform export; each confirmed by a count query"
+      "by": "tool",
+      "ref": "soar_group_alerts field=hostname top=10 created_from=1722445200000 created_to=1725123599999 tenant=acme"
     },
     "tier2.tickets_total": {
       "by": "tool",
-      "ref": "soar_search_tickets created in the period for tenant acme, size=1 -> count 80"
+      "ref": "soar_search_tickets created_from=1722445200000 created_to=1725123599999 tenant=acme size=1 -> count 80"
     },
     "tier2.tickets_on_time": {
       "by": "user",
@@ -266,7 +266,7 @@
     },
     "tier3.cases_total": {
       "by": "tool",
-      "ref": "soar_search_cases created_from=1722445200000 created_to=1725123599999 query='tenant = \"acme\"' size=1 -> count 8"
+      "ref": "soar_search_cases created_from=1722445200000 created_to=1725123599999 tenant=acme size=1 -> count 8"
     },
     "tier3.cases_excluded": {
       "by": "user",

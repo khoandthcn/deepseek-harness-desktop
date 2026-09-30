@@ -9,6 +9,8 @@ export interface AlertQueryFilters {
   status?: string | null | undefined
   createdFrom?: number | null | undefined
   createdTo?: number | null | undefined
+  /** Only records of this tenant; the customer a multi-tenant deployment is asked about. */
+  tenant?: string | null | undefined
   /** A raw xtext expression, ANDed with the structured clauses. */
   rawQuery?: string | null | undefined
 }
@@ -33,11 +35,12 @@ function quote(value: string): string {
  * It is parenthesised so an `OR` inside it cannot escape the other filters.
  */
 export function buildAlertQuery(filters: AlertQueryFilters = {}): string {
-  const { severity, status, createdFrom, createdTo, rawQuery } = filters
+  const { severity, status, createdFrom, createdTo, tenant, rawQuery } = filters
 
   const clauses: string[] = []
   const raw = rawQuery?.trim()
   if (raw) clauses.push(`( ${raw} )`)
+  if (tenant) clauses.push(`tenant = "${quote(tenant)}"`)
   if (severity) clauses.push(`severity = "${quote(severity)}"`)
   if (status) clauses.push(`status = "${quote(status)}"`)
 

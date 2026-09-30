@@ -82,6 +82,8 @@ export const SIEM_PATHS = {
   userRolePerm: '/oauth/management/get_user_role_perm',
   tenantSearch: '/cymtenantapi/api/v1/tenant/socp_search',
   eventSearch: '/adaptereventapi/v1/search',
+  alertSearch: '/cymalertapi/v1/alerts/search',
+  ruleList: '/cymapi/v1/rule/list',
   eventStatistic: '/adaptereventapi/api/v1/statistic/',
   agentSearch: '/cymagentapi/CyMAgentManagement/Search',
 } as const
@@ -96,6 +98,8 @@ export const SIEM_TOKEN_FOR: Readonly<Record<string, { audience: string, scope: 
   [SIEM_PATHS.userRolePerm]: { audience: 'gatekeeper', scope: 'login' },
   [SIEM_PATHS.tenantSearch]: { audience: 'cym_tenant_api', scope: 'read:te_tenant' },
   [SIEM_PATHS.eventSearch]: { audience: 'cym_event_alert_api', scope: 'read:eventapi' },
+  [SIEM_PATHS.alertSearch]: { audience: 'cym_alert_api', scope: 'read:alerts' },
+  [SIEM_PATHS.ruleList]: { audience: 'cym_api', scope: 'read:rule' },
   [SIEM_PATHS.eventStatistic]: { audience: 'cym_dashboard_api', scope: 'read:db_statistic' },
   [SIEM_PATHS.agentSearch]: { audience: 'cym_agent_api', scope: 'read:agent' },
 }
@@ -210,6 +214,66 @@ export function parseSiemEventSearch(payload: unknown, window: SiemWindow): Siem
   return { count, returned: events.length, window, events }
 }
 
+/** The shaped result of an alert search. */
+export interface SiemAlertSearchResult {
+  /** Alerts matching the query in the window. */
+  count: number
+  returned: number
+  window: SiemWindow
+  alerts: Record<string, unknown>[]
+}
+
+/**
+ * Parse an alert search response. Documented as `{ data: { code, count, data:
+ * [...], aggs } }`; the event search answers with the same fields one level up,
+ * so both nestings are read.
+ * @param payload - the raw upstream JSON.
+ * @param window - the window the search ran over, echoed back for the model.
+ */
+export function parseSiemAlertSearch(payload: unknown, window: SiemWindow): SiemAlertSearchResult {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new SiemContractError(`Expected a SIEM alert search object, got ${describe(payload)}`)
+  }
+  const outer = payload as Record<string, unknown>
+  const inner = typeof outer.data === 'object' && outer.data !== null && !Array.isArray(outer.data)
+    ? outer.data as Record<string, unknown>
+    : outer
+  const rows = inner.data ?? []
+  if (!Array.isArray(rows)) throw new SiemContractError('SIEM alert search `data` must be an array')
+  const alerts = rows.map(row => (typeof row === 'object' && row !== null
+    ? row as Record<string, unknown>
+    : { value: row }))
+  if (typeof inner.count !== 'number') {
+    throw new SiemContractError(
+      `SIEM returned no count for the alert search (response keys: ${Object.keys(inner).join(', ')})`,
+    )
+  }
+  return { count: inner.count, returned: alerts.length, window, alerts }
+}
+
+/**
+ * Parse a rule list response. Its shape is not documented, so this finds the
+ * rows wherever a list of objects sits and says which keys it saw when there is
+ * none, rather than returning an empty list that reads as "no rules".
+ * @param payload - the raw upstream JSON.
+ */
+export function parseSiemRules(payload: unknown): { count: number, returned: number, rules: Record<string, unknown>[] } {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new SiemContractError(`Expected a SIEM rule list object, got ${describe(payload)}`)
+  }
+  const outer = payload as Record<string, unknown>
+  const inner = typeof outer.data === 'object' && outer.data !== null && !Array.isArray(outer.data)
+    ? outer.data as Record<string, unknown>
+    : outer
+  const rows = [inner.data, inner.items, inner.rules, outer.data].find(candidate => Array.isArray(candidate))
+  if (rows === undefined) {
+    throw new SiemContractError(`SIEM rule list carried no rows (response keys: ${Object.keys(inner).join(', ')})`)
+  }
+  const rules = (rows as unknown[]).filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
+  const count = [inner.count, inner.total, outer.count, outer.total].find(value => typeof value === 'number')
+  return { count: typeof count === 'number' ? count : rules.length, returned: rules.length, rules }
+}
+
 /** One tenant the account may search. */
 export interface SiemTenant {
   tenantId: string
@@ -313,7 +377,8 @@ const QUERY_HINT =
 
 /**
  * Build the SIEM tool definitions: the access probe, the tenant list, the
- * searchable-field list, event search and count, and agent search.
+ * searchable-field list, event search and count, alert search, rule search, and
+ * agent search.
  * @param options - the SIEM HTTP client, the SOC auth service, and the clock
  *   and query-id seams.
  * @returns plain definitions, ready for `defineTool`.
@@ -459,11 +524,89 @@ export function createSiemToolDefs({ http, auth, now, newQueryId }: CreateSiemTo
       }),
     },
     {
+      name: 'siem_search_alerts',
+      description:
+        'Search SIEM alerts: what the correlation rules raised, as opposed to the raw log events.'
+        + ' Use it for which rules fired, on which host or user, at what severity, and how many —'
+        + ' `count` is the total in the window, so to count, ask for `size: 1`. The query language'
+        + ' is the event one, e.g. `severity = "High" AND rule_id = "..."`; fields include rule_id,'
+        + ' severity, status, category, sub_category, hostname, src, dst, suser, object, tenant and'
+        + ' customer_group. The window defaults to the last hour.',
+      parameters: {
+        query: { type: 'string', description: 'SIEM alert query; empty matches every alert in the window.' },
+        tenants: {
+          type: 'string',
+          description: 'Tenant id to search, from siem_list_tenants. Empty searches every tenant the account can see.',
+        },
+        last_seconds: { type: 'integer', description: 'Window length back from now, in seconds (default 3600).' },
+        time_from: { type: 'integer', description: 'Window start, epoch milliseconds. Overrides last_seconds.' },
+        time_to: { type: 'integer', description: 'Window end, epoch milliseconds. Defaults to now.' },
+        size: { type: 'integer', description: `Alerts to return, 1-${SIEM_MAX_SIZE} (default ${SIEM_DEFAULT_SIZE}).` },
+        from: { type: 'integer', description: 'Offset into the result set, for paging (default 0).' },
+        sort: { type: 'string', description: 'Sort expression, e.g. `-timestamp` (default) or `timestamp`.' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(async (args) => {
+        const window = resolveWindow(args, clock())
+        const raw = await http.postJson(SIEM_PATHS.alertSearch, {
+          _from: typeof args.from === 'number' && args.from > 0 ? Math.floor(args.from) : 0,
+          _sort: typeof args.sort === 'string' ? args.sort : '-timestamp',
+          _size: resolveSize(args.size),
+          query: typeof args.query === 'string' ? args.query : '',
+          // Always counted: the total is what most questions about alerts are
+          // after, and without it `count` would be the page length.
+          _counting: true,
+          time_from: window.time_from,
+          time_to: window.time_to,
+          tenants: typeof args.tenants === 'string' ? args.tenants : '',
+          aggs: [],
+        })
+        return parseSiemAlertSearch(raw, window)
+      }),
+    },
+    {
+      name: 'siem_search_rules',
+      description:
+        'Search the SIEM detection rules: their names, categories, engines and when they changed.'
+        + ' Use it to find what a rule that fired is meant to detect, or which rules cover a technique.',
+      parameters: {
+        text: { type: 'string', description: 'Free text to search rules for.' },
+        name: { type: 'string', description: 'Rule name to match.' },
+        category: { type: 'json', description: 'Optional array of rule categories to keep.' },
+        size: { type: 'integer', description: `Rules to return, 1-${SIEM_MAX_SIZE} (default ${SIEM_DEFAULT_SIZE}).` },
+        from: { type: 'integer', description: 'Offset into the result set, for paging (default 0).' },
+        sort: { type: 'string', description: 'Sort expression (default `-modified_time`).' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(async (args) => {
+        const raw = await http.postJson(SIEM_PATHS.ruleList, {
+          _size: resolveSize(args.size),
+          _counting: true,
+          _from: typeof args.from === 'number' && args.from > 0 ? Math.floor(args.from) : 0,
+          _sort: typeof args.sort === 'string' ? args.sort : '-modified_time',
+          _query: {
+            category: Array.isArray(args.category) ? args.category.filter((item: unknown) => typeof item === 'string') : [],
+            subcategory: [],
+            engines: [],
+            by_actor: false,
+            text_search: typeof args.text === 'string' ? args.text : '',
+            name: typeof args.name === 'string' ? args.name : '',
+            time_from: 0,
+            time_to: 0,
+            creator: '',
+            modifier: '',
+          },
+        })
+        return parseSiemRules(raw)
+      }),
+    },
+    {
       name: 'siem_search_agents',
       description:
         'Search the SIEM agents (endpoints reporting logs) and return their identity and platform.'
         + ' Use it to find which machine a hostname belongs to, or to list the agents of a tenant.',
       parameters: {
+        search: { type: 'string', description: 'Free text to match agents by, e.g. a hostname or an address.' },
         active: {
           type: 'string',
           description: 'Agent state filter as SIEM spells it: "1" for active, "0" for inactive. Omit for both.',
@@ -475,6 +618,7 @@ export function createSiemToolDefs({ http, auth, now, newQueryId }: CreateSiemTo
       execute: guarded(async (args) => {
         const query: Record<string, unknown> = {}
         if (typeof args.active === 'string' && args.active.length > 0) query.active = args.active
+        if (typeof args.search === 'string' && args.search.trim() !== '') query.search = args.search.trim()
         const raw = await http.postJson(SIEM_PATHS.agentSearch, {
           limit: resolveSize(args.size),
           since: typeof args.from === 'number' && args.from > 0 ? Math.floor(args.from) : 0,

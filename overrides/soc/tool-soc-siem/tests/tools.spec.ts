@@ -61,6 +61,8 @@ describe('createSiemToolDefs', () => {
       'siem_list_event_fields',
       'siem_search_events',
       'siem_count_events',
+      'siem_search_alerts',
+      'siem_search_rules',
       'siem_search_agents',
     ])
   })
@@ -307,5 +309,69 @@ describe('SIEM_TOKEN_FOR', () => {
     expect(SIEM_TOKEN_FOR[SIEM_PATHS.eventStatistic]).toEqual({ audience: 'cym_dashboard_api', scope: 'read:db_statistic' })
     expect(SIEM_TOKEN_FOR[SIEM_PATHS.tenantSearch]).toEqual({ audience: 'cym_tenant_api', scope: 'read:te_tenant' })
     expect(SIEM_TOKEN_FOR[SIEM_PATHS.agentSearch]).toEqual({ audience: 'cym_agent_api', scope: 'read:agent' })
+  })
+})
+
+describe('siem_search_alerts', () => {
+  it('searches the alert API for one tenant and window, and always asks for the total', async () => {
+    const { http, byName } = defs(true, {
+      [SIEM_PATHS.alertSearch]: { data: { code: 0, count: 41, aggs: [], data: [{ alert_id: 'a1', rule_id: 'R1', severity: 'High' }] } },
+    })
+    const out = await byName('siem_search_alerts').execute({
+      query: 'severity = "High"', tenants: 'acme', time_from: 1000, time_to: 2000, size: 1,
+    }) as { count: number, returned: number, alerts: Record<string, unknown>[] }
+    // the total, not the page length
+    expect(out.count).toBe(41)
+    expect(out.returned).toBe(1)
+    expect(out.alerts[0]!.rule_id).toBe('R1')
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, unknown>]
+    expect(path).toBe('/cymalertapi/v1/alerts/search')
+    expect(body).toEqual({
+      _from: 0, _sort: '-timestamp', _size: 1, query: 'severity = "High"', _counting: true,
+      time_from: 1000, time_to: 2000, tenants: 'acme', aggs: [],
+    })
+  })
+
+  it('reads the same fields one level up, as the event search returns them', async () => {
+    const { byName } = defs(true, { [SIEM_PATHS.alertSearch]: { code: 0, count: 2, data: [{ alert_id: 'a1' }, { alert_id: 'a2' }] } })
+    const out = await byName('siem_search_alerts').execute({}) as { count: number, returned: number }
+    expect([out.count, out.returned]).toEqual([2, 2])
+  })
+
+  it('refuses a response with no count rather than reporting the page length as the total', async () => {
+    const { byName } = defs(true, { [SIEM_PATHS.alertSearch]: { data: { data: [{ alert_id: 'a1' }] } } })
+    await expect(byName('siem_search_alerts').execute({})).rejects.toThrow(/no count/)
+  })
+
+  it('gets its token from the alert API, not the event one', () => {
+    expect(SIEM_TOKEN_FOR[SIEM_PATHS.alertSearch]).toEqual({ audience: 'cym_alert_api', scope: 'read:alerts' })
+  })
+})
+
+describe('siem_search_rules', () => {
+  it('sends the documented rule filter and returns the rows wherever the response puts them', async () => {
+    const { http, byName } = defs(true, {
+      [SIEM_PATHS.ruleList]: { data: { count: 12, data: [{ name: 'Rule A', category: 'malware' }] } },
+    })
+    const out = await byName('siem_search_rules').execute({ text: 'powershell', category: ['malware'], size: 5 })
+    expect(out).toEqual({ count: 12, returned: 1, rules: [{ name: 'Rule A', category: 'malware' }] })
+    const [path, body] = callsOf(http.postJson)[0] as [string, Record<string, any>]
+    expect(path).toBe('/cymapi/v1/rule/list')
+    expect(body).toMatchObject({ _size: 5, _counting: true, _from: 0, _sort: '-modified_time' })
+    expect(body._query).toMatchObject({ text_search: 'powershell', category: ['malware'], name: '', by_actor: false })
+  })
+
+  it('says what it saw when the response carries no rows, instead of reporting no rules', async () => {
+    const { byName } = defs(true, { [SIEM_PATHS.ruleList]: { status: 'failed', message: 'denied' } })
+    await expect(byName('siem_search_rules').execute({})).rejects.toThrow(/carried no rows .*status, message/)
+  })
+})
+
+describe('siem_search_agents text search', () => {
+  it('passes free text through as the agent search term', async () => {
+    const { http, byName } = defs(true, { [SIEM_PATHS.agentSearch]: { success: true, total: 0, agent_infos: [] } })
+    await byName('siem_search_agents').execute({ search: ' web-01 ', active: '0' })
+    const [, body] = callsOf(http.postJson)[0] as [string, Record<string, any>]
+    expect(body.query).toEqual({ active: '0', search: 'web-01' })
   })
 })

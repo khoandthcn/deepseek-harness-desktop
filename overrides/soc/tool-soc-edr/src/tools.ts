@@ -24,6 +24,8 @@ export interface EdrAdapterLike {
   searchEvents(options: SearchEventsOptions): Promise<unknown>
   searchAlerts(options: SearchAlertsOptions): Promise<unknown>
   searchAgents(options: SearchAgentsOptions): Promise<unknown>
+  getAgents(agentIds: string[], infos?: string[] | undefined): Promise<unknown>
+  getAlertEvents(alertIds: string[], direction: 'asc' | 'desc'): Promise<unknown>
   threatHuntingHistory(options: HuntingHistoryOptions): Promise<unknown>
   listEventFields(): Promise<unknown>
   listAlertFields(): Promise<unknown>
@@ -81,13 +83,37 @@ export const NOT_AUTHENTICATED = {
 
 /**
  * Shared guidance appended to every EDR read tool. EDR timestamps are epoch
- * milliseconds, and a relative window (`last_seconds`) is often easier than an
+ * seconds, and a relative window (`last_seconds`) is often easier than an
  * absolute one.
  */
 const EDR_NOTES =
-  ' Notes: EDR timestamps are epoch MILLISECONDS. For a recent window prefer `last_seconds`'
-  + ' (e.g. 3600 for the last hour); otherwise give `from_timestamp`/`to_timestamp` in epoch'
-  + ' milliseconds. `query` is a raw EDR search expression for anything the named filters cannot express.'
+  ' Notes: EDR timestamps are epoch SECONDS (a millisecond value is accepted and converted). For a'
+  + ' recent window prefer `last_seconds` (e.g. 3600 for the last hour); otherwise give'
+  + ' `from_timestamp`/`to_timestamp`. `query` is an EDR search expression, e.g.'
+  + ' `severity = "High" OR severity = "Low"` — `=`, `AND`, `OR`, double-quoted values. `since` is'
+  + ' the zero-based offset of the first record and `since + limit` must stay below 10000: narrow'
+  + ' the window rather than paging past that. The total is in `total`; to count, ask for `limit: 1`.'
+
+/**
+ * A required, non-empty list of strings. A `json` parameter arrives as whatever
+ * the model wrote, and one bare id is the usual slip.
+ * @param value - the parameter as received.
+ * @param name - its name, for the error.
+ * @returns the strings.
+ * @throws when there is no usable id.
+ */
+function stringList(value: unknown, name: string): string[] {
+  const list = (Array.isArray(value) ? value : typeof value === 'string' ? [value] : [])
+    .filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    .map(item => item.trim())
+  if (list.length === 0) throw new Error(`${name} must be a non-empty array of strings.`)
+  return list
+}
+
+/** The optional counterpart of {@link stringList}: absent stays absent. */
+function optionalStringList(value: unknown, name: string): string[] | undefined {
+  return value === undefined || value === null ? undefined : stringList(value, name)
+}
 
 /** Render the JSON value as text; the harness shows this in the tool card. */
 function renderJson(_args: unknown, value: unknown): { type: 'text'; text: string }[] {
@@ -146,13 +172,14 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
     },
     from_timestamp: {
       type: 'integer',
-      description: 'Absolute window start, in epoch MILLISECONDS.',
+      description: 'Absolute window start, in epoch SECONDS.',
     },
     to_timestamp: {
       type: 'integer',
-      description: 'Absolute window end, in epoch MILLISECONDS.',
+      description: 'Absolute window end, in epoch SECONDS.',
     },
     limit: { type: 'integer', description: 'Maximum results to return. Defaults to 50.' },
+    since: { type: 'integer', description: 'Zero-based offset of the first result, for paging. Defaults to 0.' },
   }
 
   return [
@@ -183,6 +210,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         fromTimestamp: args.from_timestamp,
         toTimestamp: args.to_timestamp,
         limit: args.limit,
+        since: args.since,
         sort: parseSort(args.sort),
       })),
     },
@@ -207,6 +235,7 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         fromTimestamp: args.from_timestamp,
         toTimestamp: args.to_timestamp,
         limit: args.limit,
+        since: args.since,
         sort: parseSort(args.sort),
       })),
     },
@@ -220,9 +249,10 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         query: {
           type: 'json',
           description:
-            'Agent filter object, as EDR spells it, e.g. {"hostname": "web-01"}. Omit to list every agent.',
+            'Agent filter object, as EDR spells it. One condition is {"compare": {"field": "online",'
+            + ' "operator": "=", "value": "false"}} — that one lists offline agents. Omit to list every agent.',
         },
-        since: { type: 'integer', description: 'A `since` cursor, in epoch MILLISECONDS.' },
+        since: { type: 'integer', description: 'Zero-based offset of the first agent to return. Defaults to 0.' },
         limit: { type: 'integer', description: 'Maximum agents to return. Defaults to 50.' },
       },
       output: JSON_OUTPUT,
@@ -231,6 +261,43 @@ export function createEdrToolDefs({ adapter, auth }: CreateEdrToolDefsOptions): 
         since: args.since,
         limit: args.limit,
       })),
+    },
+    {
+      name: 'edr_get_agents',
+      description:
+        'Get detailed information for specific EDR agents by agent id: host, network interfaces,'
+        + ' configuration, policy, update group, first and last ping. Use it after a search gave you'
+        + ' agent ids — from an alert\'s `agent_id`, or from edr_search_agents.',
+      parameters: {
+        agent_ids: { type: 'json', description: 'Array of agent ids, e.g. ["0662DA39…"].' },
+        infos: {
+          type: 'json',
+          description:
+            'Optional array naming the blocks to return, from: hostInfo, netInterfaces, cfgInfos,'
+            + ' first_ping, last_ping, group_id, update_group, policy, ip. Omit for EDR\'s default set.',
+        },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(args => adapter.getAgents(stringList(args.agent_ids, 'agent_ids'), optionalStringList(args.infos, 'infos'))),
+    },
+    {
+      name: 'edr_get_alert_events',
+      description:
+        'Get the raw events behind one or more EDR alerts, grouped by alert id. Use it to see what'
+        + ' actually happened on the host for an alert: the processes, command lines, files and'
+        + ' connections the detection fired on. Take `alert_id` from edr_search_alerts.',
+      parameters: {
+        alert_ids: { type: 'json', description: 'Array of alert ids, e.g. ["20211011_8483_971179602_261577"].' },
+        direction: {
+          type: 'string',
+          description: 'Order of each alert\'s events by creation time: "asc" or "desc" (default "desc").',
+        },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(args => adapter.getAlertEvents(
+        stringList(args.alert_ids, 'alert_ids'),
+        args.direction === 'asc' ? 'asc' : 'desc',
+      )),
     },
     {
       name: 'edr_threat_hunting_history',
