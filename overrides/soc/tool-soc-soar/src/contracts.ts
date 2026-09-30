@@ -59,7 +59,28 @@ export interface AlertField extends Extra {
   description?: string | null | undefined
 }
 
-/** Ticket/case — shape provisional (api-map §7); unknown fields pass through. */
+/**
+ * A case: what an investigation is filed under. Distinct from a ticket — a
+ * case owns tickets (`total_ticket`, `open_ticket`, `done_ticket`) and alerts
+ * link to it (`linked_case`). Unknown fields pass through.
+ */
+export interface Case extends Extra {
+  _id?: number | null | undefined
+  /** The human-readable per-tenant id a user quotes. */
+  case_id?: string | null | undefined
+  tenant?: string | null | undefined
+  title?: string | null | undefined
+  status?: string | null | undefined
+  severity?: string | null | undefined
+  type?: string | null | undefined
+  owner?: string | null | undefined
+  created?: number | null | undefined
+  closed_time?: number | null | undefined
+  sla_expired?: boolean | null | undefined
+  incident_tag?: string | null | undefined
+}
+
+/** A ticket: a unit of work assigned to a handling group. Unknown fields pass through. */
 export interface Ticket extends Extra {
   _id?: number | null | undefined
   object_id?: string | null | undefined

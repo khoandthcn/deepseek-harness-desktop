@@ -67,8 +67,8 @@ class CheckTests(unittest.TestCase):
         self.assertIn('tier1.alert_total', paths)
         self.assertIn('tier3.cases_total', paths)
         self.assertIn('tier1.sla.current', paths)
-        # A case is a ticket, so its count is the platform's to answer; whether
-        # the SLA was met is the service team's.
+        # How many cases there were is the platform's to answer; whether the
+        # SLA was met is the service team's.
         self.assertIn('tier3.cases_total', br.FROM_TOOLS)
         self.assertNotIn('tier1.sla.current', br.FROM_TOOLS)
 

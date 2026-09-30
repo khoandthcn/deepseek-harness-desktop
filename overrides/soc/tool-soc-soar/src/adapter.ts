@@ -10,6 +10,7 @@ import {
   type Alert,
   type AlertField,
   type AlertType,
+  type Case,
   type NotificationList,
   type SearchEnvelope,
   type Ticket,
@@ -30,6 +31,7 @@ export const SOAR_SCOPES = {
   alertSearch: 'read:alert',
   alertTypes: 'read:alert_types',
   alertFields: 'read:alert_field',
+  caseSearch: 'read:case',
   ticketSearch: 'read:ticket',
   notifications: 'read:notification',
 } as const
@@ -51,6 +53,15 @@ export interface PageOptions {
 }
 
 export interface SearchTicketsOptions extends PageOptions {
+  rawQuery?: string | null | undefined
+  sort?: string | undefined
+}
+
+export interface SearchCasesOptions extends PageOptions {
+  severity?: string | null | undefined
+  status?: string | null | undefined
+  createdFrom?: number | null | undefined
+  createdTo?: number | null | undefined
   rawQuery?: string | null | undefined
   sort?: string | undefined
 }
@@ -105,6 +116,31 @@ export class SoarAdapter {
     const body = { _from: page * size, _size: size, _sort: 'name', _counting: true, query: '' }
     const data = await this.http.postJson(`${this.base()}/alert_field/_search`, body, SOAR_SCOPES.alertFields)
     return parseSearchEnvelope<AlertField>(data)
+  }
+
+  /**
+   * Search cases. They sit beside alerts under the SOAR service and take the
+   * same search body and query language; tickets are a different entity under
+   * a different service.
+   */
+  async searchCases(options: SearchCasesOptions = {}): Promise<SearchEnvelope<Case>> {
+    const { page = 0, size = 50, sort = '-created' } = options
+    const body = {
+      _from: page * size,
+      _size: size,
+      _sort: sort,
+      _counting: true,
+      _fields: '',
+      query: buildAlertQuery({
+        severity: options.severity,
+        status: options.status,
+        createdFrom: options.createdFrom,
+        createdTo: options.createdTo,
+        rawQuery: options.rawQuery,
+      }),
+    }
+    const data = await this.http.postJson(`${this.base()}/case/_search`, body, SOAR_SCOPES.caseSearch)
+    return parseSearchEnvelope<Case>(data)
   }
 
   async searchTickets(options: SearchTicketsOptions = {}): Promise<SearchEnvelope<Ticket>> {

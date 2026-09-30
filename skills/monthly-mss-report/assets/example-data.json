@@ -266,7 +266,7 @@
     },
     "tier3.cases_total": {
       "by": "tool",
-      "ref": "soar_search_tickets query='tenant = \"acme\" AND assigned_group = \"tier3\" AND created >= 1722445200000 AND created <= 1725123599999' size=1 -> count 8 (tier rule confirmed by the user)"
+      "ref": "soar_search_cases created_from=1722445200000 created_to=1725123599999 query='tenant = \"acme\"' size=1 -> count 8"
     },
     "tier3.cases_excluded": {
       "by": "user",

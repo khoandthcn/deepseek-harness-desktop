@@ -6,12 +6,13 @@ import { createSoarToolDefs } from '../src/tools.ts'
 const callsOf = (m: { mock: { calls: unknown[] } }): any[][] =>
   m.mock.calls as unknown as any[][]
 
-/** The five adapter methods the tools call, all as spies. */
+/** The adapter methods the tools call, all as spies. */
 function fakeAdapter() {
   return {
     searchAlerts: vi.fn(async () => ({ count: 1, data: [{ _id: 1, severity: 'high' }] })),
     listAlertTypes: vi.fn(async () => ({ count: 1, data: [{ _id: 2, name: 'phishing' }] })),
     listAlertFields: vi.fn(async () => ({ count: 1, data: [{ _id: 3, name: 'severity' }] })),
+    searchCases: vi.fn(async () => ({ count: 1, data: [{ _id: 5, case_id: '240801_0001' }] })),
     searchTickets: vi.fn(async () => ({ count: 1, data: [{ _id: 4, status: 'OPEN' }] })),
     listNotifications: vi.fn(async () => ({
       notifications: [{ notification_id: 'n1' }],
@@ -49,6 +50,7 @@ const EXPECTED = [
   'soar_search_alerts',
   'soar_list_alert_types',
   'soar_list_alert_fields',
+  'soar_search_cases',
   'soar_search_tickets',
   'soar_list_notifications',
 ]
@@ -56,7 +58,7 @@ const EXPECTED = [
 const READ_TOOLS = EXPECTED.filter(n => n !== 'soc_login')
 
 describe('createSoarToolDefs', () => {
-  it('defines exactly the six expected tools', () => {
+  it('defines exactly the expected tools', () => {
     const { list } = defs(true)
     expect(list.map(d => d.name).sort()).toEqual([...EXPECTED].sort())
   })
@@ -156,6 +158,26 @@ describe('authenticated happy paths', () => {
       counting_all: 1,
       counting_unread: 1,
     })
+  })
+
+  it('soar_search_cases forwards the period, the raw query and paging to the case search', async () => {
+    const { adapter, byName } = defs(true)
+    const out = await byName('soar_search_cases').execute({
+      created_from: 10, created_to: 20, query: 'tenant = "acme"', size: 1,
+    })
+    expect(adapter.searchCases).toHaveBeenCalledWith({
+      severity: undefined,
+      status: undefined,
+      createdFrom: 10,
+      createdTo: 20,
+      rawQuery: 'tenant = "acme"',
+      page: undefined,
+      size: 1,
+      sort: '-created',
+    })
+    // cases never go to the ticket search: they are different things
+    expect(adapter.searchTickets).not.toHaveBeenCalled()
+    expect(out).toEqual({ count: 1, data: [{ _id: 5, case_id: '240801_0001' }] })
   })
 
   it('soar_search_tickets forwards its raw query and paging', async () => {

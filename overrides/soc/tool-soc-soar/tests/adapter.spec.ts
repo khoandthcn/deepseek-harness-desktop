@@ -85,6 +85,27 @@ describe('SoarAdapter', () => {
     expect(body).toEqual({ _from: 0, _size: 500, _sort: 'name', _counting: true, query: '' })
   })
 
+  it('search_cases asks the case endpoint, under its own scope, for the period and tenant together', async () => {
+    const { http, soar } = adapter({
+      '/soarapi/v1/MASTER/case/_search': { count: 8, data: [{ _id: 9, case_id: '240801_0001', sla_expired: false }] },
+    })
+    const env = await soar.searchCases({ rawQuery: 'tenant = "acme"', createdFrom: 10, createdTo: 20, size: 1 })
+    expect(env.count).toBe(8)
+    expect(env.data[0]!.case_id).toBe('240801_0001')
+    const [path, body, scope] = callsOf(http.postJson)[0] as [string, Record<string, unknown>, string]
+    // a case is not a ticket: its own entity beside alerts, not the ticket service
+    expect(path).toBe('/soarapi/v1/MASTER/case/_search')
+    expect(scope).toBe('read:case')
+    expect(body).toEqual({
+      _from: 0,
+      _size: 1,
+      _sort: '-created',
+      _counting: true,
+      _fields: '',
+      query: '( tenant = "acme" ) AND ( created >= 10 AND created <= 20 )',
+    })
+  })
+
   it('search_tickets passes rawQuery through verbatim', async () => {
     const { http, soar } = adapter({
       '/ticketapi/v1/MASTER/ticket/restricted_search': { count: 1, data: [{ _id: 7, status: 'OPEN' }] },

@@ -9,7 +9,7 @@ export interface AlertQueryFilters {
   status?: string | null | undefined
   createdFrom?: number | null | undefined
   createdTo?: number | null | undefined
-  /** Escape hatch: used verbatim, skipping every structured clause. */
+  /** A raw xtext expression, ANDed with the structured clauses. */
   rawQuery?: string | null | undefined
 }
 
@@ -24,12 +24,20 @@ function quote(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
-/** AND-join the given clauses; `rawQuery` (when present) wins outright. */
+/**
+ * AND-join the given clauses, the raw query among them.
+ *
+ * The raw query used to replace every structured clause. A caller that passed
+ * a period and a raw tenant filter together then searched all of time without
+ * being told, which is the difference between a month's count and a wrong one.
+ * It is parenthesised so an `OR` inside it cannot escape the other filters.
+ */
 export function buildAlertQuery(filters: AlertQueryFilters = {}): string {
   const { severity, status, createdFrom, createdTo, rawQuery } = filters
-  if (rawQuery) return rawQuery
 
   const clauses: string[] = []
+  const raw = rawQuery?.trim()
+  if (raw) clauses.push(`( ${raw} )`)
   if (severity) clauses.push(`severity = "${quote(severity)}"`)
   if (status) clauses.push(`status = "${quote(status)}"`)
 
@@ -43,5 +51,6 @@ export function buildAlertQuery(filters: AlertQueryFilters = {}): string {
     clauses.push(`created <= ${Math.trunc(to)}`)
   }
 
-  return clauses.join(' AND ')
+  // A raw query on its own goes through exactly as written.
+  return clauses.length === 1 && raw ? raw : clauses.join(' AND ')
 }

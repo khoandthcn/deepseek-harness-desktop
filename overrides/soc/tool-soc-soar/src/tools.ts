@@ -17,7 +17,7 @@ import type {
   ListNotificationsOptions,
   PageOptions,
   SearchAlertsOptions,
-  SearchTicketsOptions,
+  SearchCasesOptions, SearchTicketsOptions,
 } from './adapter.ts'
 
 /** The adapter surface the tools drive; `SoarAdapter` satisfies it structurally. */
@@ -25,6 +25,7 @@ export interface SoarAdapterLike {
   searchAlerts(options: SearchAlertsOptions): Promise<unknown>
   listAlertTypes(options: PageOptions): Promise<unknown>
   listAlertFields(options: PageOptions): Promise<unknown>
+  searchCases(options: SearchCasesOptions): Promise<unknown>
   searchTickets(options: SearchTicketsOptions): Promise<unknown>
   listNotifications(options: ListNotificationsOptions): Promise<unknown>
 }
@@ -216,14 +217,55 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
       execute: guarded(args => adapter.listAlertFields({ page: args.page, size: args.size })),
     },
     {
+      name: 'soar_search_cases',
+      description:
+        'Search SOAR cases: what an investigation is filed under. A case is not a ticket — it owns'
+        + ' tickets (`total_ticket`, `open_ticket`, `done_ticket`) and alerts link to it. Use it'
+        + ' for which cases are open, what a case is about, the case a user quotes by its'
+        + ' `case_id`, and how many cases a period had (read `count` with `size: 1`). Filters'
+        + ' combine with AND. Fields `query` can filter on include `tenant`, `type`, `owner`,'
+        + ' `closed_time`, `sla_expired` (true once the case missed its SLA) and `incident_tag`'
+        + ' ("incident" on a case confirmed as an incident).'
+        + SOAR_NOTES,
+      parameters: {
+        severity: { type: 'string', description: 'Case severity, e.g. "high".' },
+        status: { type: 'string', description: 'Case status, as the platform spells it.' },
+        created_from: {
+          type: 'integer',
+          description: 'Only cases created at or after this time, in epoch MILLISECONDS.',
+        },
+        created_to: {
+          type: 'integer',
+          description: 'Only cases created at or before this time, in epoch MILLISECONDS.',
+        },
+        query: {
+          type: 'string',
+          description: 'Raw SOAR xtext query, ANDed with the other filters, e.g. \'tenant = "acme"\'.',
+        },
+        ...paging,
+        sort: { type: 'string', description: 'Sort field; prefix with "-" for descending. Defaults to "-created".' },
+      },
+      output: JSON_OUTPUT,
+      execute: guarded(args => adapter.searchCases({
+        severity: args.severity,
+        status: args.status,
+        createdFrom: args.created_from,
+        createdTo: args.created_to,
+        rawQuery: args.query,
+        page: args.page,
+        size: args.size,
+        sort: args.sort ?? '-created',
+      })),
+    },
+    {
       name: 'soar_search_tickets',
       description:
-        'Search SOAR tickets. A ticket is what the platform also calls a case or an incident — there'
-        + ' is no separate case search. Use it for investigation-level questions: which cases are'
-        + ' open, what a case contains, the case a user quotes by its `case_id`; and for counts, by'
-        + ' reading `count` with `size: 1`. Fields a query can filter on include `created`,'
-        + ' `tenant`, `status`, `severity`, `type`, `assigned_group` (the handling tier, e.g.'
-        + ' "tier2", "tier3") and `sla_expired` (true once the ticket missed its SLA).'
+        'Search SOAR tickets: units of work assigned to a handling group. A ticket is not a case —'
+        + ' for cases use soar_search_cases. Use this for what a group has to do or did: open'
+        + ' tickets, tickets by tier, tickets that missed their SLA; and for counts, by reading'
+        + ' `count` with `size: 1`. Fields a query can filter on include `created`, `tenant`,'
+        + ' `status`, `severity`, `type`, `assigned_group` (the handling tier, e.g. "tier2",'
+        + ' "tier3") and `sla_expired` (true once the ticket missed its SLA).'
         + SOAR_NOTES,
       parameters: {
         query: {

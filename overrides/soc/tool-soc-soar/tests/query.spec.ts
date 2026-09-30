@@ -24,8 +24,22 @@ describe('buildAlertQuery', () => {
     )
   })
 
-  it('lets rawQuery override everything', () => {
-    expect(buildAlertQuery({ severity: 'high', rawQuery: 'custom = 1' })).toBe('custom = 1')
+  it('passes a raw query on its own through exactly as written', () => {
+    expect(buildAlertQuery({ rawQuery: 'custom = 1' })).toBe('custom = 1')
+  })
+
+  it('ANDs a raw query with the other filters instead of replacing them', () => {
+    // It used to win outright: a period plus a raw tenant filter searched all
+    // of time, silently, and every monthly count came out wrong.
+    expect(buildAlertQuery({ rawQuery: 'tenant = "acme"', createdFrom: 10, createdTo: 20 }))
+      .toBe('( tenant = "acme" ) AND ( created >= 10 AND created <= 20 )')
+    expect(buildAlertQuery({ severity: 'high', rawQuery: 'custom = 1' }))
+      .toBe('( custom = 1 ) AND severity = "high"')
+  })
+
+  it('parenthesises a raw query so an OR inside it cannot escape the period', () => {
+    expect(buildAlertQuery({ rawQuery: 'a = 1 OR b = 2', createdFrom: 10 }))
+      .toBe('( a = 1 OR b = 2 ) AND created >= 10')
   })
 
   it('escapes double quotes', () => {
