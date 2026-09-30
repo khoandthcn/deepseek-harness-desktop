@@ -111,12 +111,17 @@ export function apply(ctx: Context, config: Config = {}): void {
   let authorization: string | undefined
   const ensureAuthorization = async (): Promise<boolean> => {
     if (authorization !== undefined) return true
-    const [username, apiKey, configuredDomain] = await Promise.all([
+    const [storedUsername, apiKey, storedDomain] = await Promise.all([
       readCredential(ctx, usernameRef),
       readCredential(ctx, apiKeyRef),
       readCredential(ctx, TI_DOMAIN_REF),
     ])
-    domain = configuredDomain
+    // The card keeps the platform and the account name in its settings
+    // section, where they can be read back and shown; the references still
+    // answer for a machine configured by an earlier build or its environment.
+    const section = ctx.get('socAuth')?.threatIntelSettings() ?? { tiDomain: '', tiUsername: '' }
+    const username = section.tiUsername.trim() || storedUsername
+    domain = section.tiDomain.trim() || storedDomain
     // Without a platform to reach, an account is not enough to call anything.
     if (username === undefined || apiKey === undefined) return false
     if (baseUrl() === '') return false

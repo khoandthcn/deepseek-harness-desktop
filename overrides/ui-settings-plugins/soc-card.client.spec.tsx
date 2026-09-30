@@ -95,11 +95,13 @@ describe('the SOC platform card', () => {
     expect(actions.edit).toHaveBeenCalledWith('socDomain', 'soc.example.com')
   })
 
-  it('reports which values the Host already holds', () => {
-    renderCard(SocCredentialsCard, SOC_FIELDS, field => field === 'socDomain')
+  it('badges only the secret, whose value it cannot show', () => {
+    // A control that renders its value needs no badge saying it has one; the
+    // password cannot be read back, so it is the one that does.
+    renderCard(SocCredentialsCard, SOC_FIELDS, field => field === 'socPassword')
     expand(en.socTitle)
     expect(screen.getAllByText(en.socValueSet)).toHaveLength(1)
-    expect(screen.getAllByText(en.socValueUnset)).toHaveLength(SOC_FIELDS.length - 1)
+    expect(screen.queryByText(en.socValueUnset)).toBeNull()
   })
 })
 

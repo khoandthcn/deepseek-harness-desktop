@@ -499,9 +499,9 @@ patch(
   "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n",
   "  const webSearch = new WebSearchCardController(\n    ctx.settingsScope.bind({ namespace: WEB_SEARCH_NS }), ctx)\n"
   + "  const socCredentials = new SocCredentialsCardController(\n"
-  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_CREDENTIALS_NS }), ctx, SOC_FIELDS)\n"
+  + "    ctx.settingsScope.bind<Record<string, unknown>>({ namespace: SOC_CREDENTIALS_NS }), ctx, SOC_FIELDS)\n"
   + "  const socThreatIntel = new SocCredentialsCardController(\n"
-  + "    ctx.settingsScope.bind<Record<string, never>>({ namespace: SOC_TI_NS }), ctx, TI_FIELDS)\n",
+  + "    ctx.settingsScope.bind<Record<string, unknown>>({ namespace: SOC_TI_NS }), ctx, TI_FIELDS)\n",
 )
 patch(
   PLUGINS_INDEX,
@@ -572,7 +572,7 @@ patch(
   + "  soc_socClientId: 'Sign-in client id',\n"
   + "  soc_socClientIdHint: 'The OAuth client the platform issued for this app. Your SOC administrator has it; sign-in fails without one.',\n"
   + "  soc_socUsername: 'Username',\n"
-  + "  soc_socUsernameHint: 'Stored outside the settings file. Leave blank to keep the current username.',\n"
+  + "  soc_socUsernameHint: 'The account the SOC tools sign in as. Kept with this card and shown here.',\n"
   + "  soc_socPassword: 'Password',\n"
   + "  soc_socPasswordHint: 'Stored outside the settings file. The one-time code is asked for at sign-in.',\n"
   + "  soc_tiDomain: 'Platform domain',\n"
@@ -598,7 +598,7 @@ patch(
   + "  soc_socClientId: '登录客户端 ID',\n"
   + "  soc_socClientIdHint: '平台为本应用签发的 OAuth 客户端标识，由 SOC 管理员提供；缺少它无法登录。',\n"
   + "  soc_socUsername: '用户名',\n"
-  + "  soc_socUsernameHint: '不写入设置文件。留空表示保持当前用户名。',\n"
+  + "  soc_socUsernameHint: 'SOC 工具登录所用的账号，随本卡片保存并在此显示。',\n"
   + "  soc_socPassword: '密码',\n"
   + "  soc_socPasswordHint: '不写入设置文件；一次性验证码在登录时询问。',\n"
   + "  soc_tiDomain: '平台域名',\n"

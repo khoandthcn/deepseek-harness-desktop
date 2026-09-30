@@ -1,13 +1,19 @@
 /**
  * The staged forms behind the two SOC cards in Settings.
  *
- * Both cards write through the **credentials domain**, not into a settings
- * section: a credential's literal never rides a response, so each control
- * learns only whether the Host holds a value for its reference. The platform's
- * domain and tenant are configuration rather than secrets, but they share the
- * store because it is the one surface a card can write to, and because it keeps
- * every setting of one platform in one place. `soc-auth` reads the same
- * references when it signs in.
+ * Each card writes to two places, because its controls are two different
+ * kinds of thing.
+ *
+ * The **secrets** — the password and the API key — go through the credentials
+ * domain. A credential's literal never rides a response, so those controls
+ * learn only whether the Host holds a value, start blank, and a blank draft
+ * writes nothing.
+ *
+ * Everything else — the platform domains, the sign-in client id, the account
+ * names — is configuration, and lives in the card's own **settings section**.
+ * A settings value does ride a response, so those controls come back filled
+ * in: the user types a domain once rather than on every visit to this tab.
+ * `soc-auth` reads the same section when it signs in.
  *
  * There are two cards because there are two platforms: the SOC systems behind
  * one sign-in, and the Threat Intelligence platform, which is a separate
@@ -22,7 +28,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
-  CardForm, type CardActions, type CardFieldState, type CardShell,
+  CardForm, textField, type CardActions, type CardFieldState, type CardShell,
 } from './card-form.ts'
 
 /**
@@ -38,14 +44,21 @@ export const SOC_TI_NS = 'soc-threat-intel'
 
 /** One control on a card: the form field it stages under, and where it is kept. */
 export interface CardCredentialField {
-  /** The field name, which is also the locale key suffix (`soc_<field>`). */
+  /**
+   * The field name. It is the locale key suffix (`soc_<field>`) and, for
+   * everything but a secret, the key inside the card's settings section.
+   */
   readonly field: string
-  /** The credential reference the Host stores it under. */
+  /**
+   * The credential reference the Host stores it under. A secret is written
+   * there; for the rest it names the environment variable and the older store
+   * entry that still answer for the field when the section carries nothing.
+   */
   readonly ref: string
   /**
-   * Whether the control masks what is typed. Only the two actual secrets do:
-   * a domain and a sign-in name are configuration the user needs to read back
-   * while typing, even though every value here travels write-only.
+   * Whether this control holds a secret: written to the credentials domain,
+   * masked, write-only, and blank until typed. Everything else is
+   * configuration, kept in the settings section and shown filled in.
    */
   readonly secret?: boolean
 }
@@ -69,6 +82,11 @@ export const SOC_FIELDS: readonly CardCredentialField[] = [
   { field: 'socUsername', ref: 'SOC_USERNAME' },
   { field: 'socPassword', ref: 'SOC_PASSWORD', secret: true },
 ]
+
+/** The section keys a card edits: every control that is not a secret. */
+export function sectionFields(fields: readonly CardCredentialField[]): string[] {
+  return fields.filter(entry => entry.secret !== true).map(entry => entry.field)
+}
 
 /** The Threat Intelligence card's controls: its host and its account. */
 export const TI_FIELDS: readonly CardCredentialField[] = [
@@ -111,8 +129,9 @@ const UNKNOWN_CREDENTIAL: CredentialState = { configured: false, writable: true 
 
 /** Bridges one platform's credential references onto its card. */
 export class SocCredentialsCardController {
-  private readonly form: CardForm<Record<string, never>>
+  private readonly form: CardForm<Record<string, unknown>>
   private readonly store: SnapshotStore<SocCredentialsCardState>
+  private readonly secrets: readonly CardCredentialField[]
   private states: Record<string, CredentialState>
 
   /**
@@ -123,15 +142,20 @@ export class SocCredentialsCardController {
    * @param fields - the controls this card carries, in render order.
    */
   constructor(
-    scope: SettingsScope<Record<string, never>>,
+    scope: SettingsScope<Record<string, unknown>>,
     private readonly ctx: ClientContext,
     private readonly fields: readonly CardCredentialField[],
   ) {
-    this.states = Object.fromEntries(fields.map(entry => [entry.field, UNKNOWN_CREDENTIAL]))
+    this.secrets = fields.filter(entry => entry.secret === true)
+    this.states = Object.fromEntries(this.secrets.map(entry => [entry.field, UNKNOWN_CREDENTIAL]))
     this.form = new CardForm(
       scope,
-      [],
-      fields.map(entry => ({
+      // Configuration: kept in the section, so each control comes back with
+      // what the user typed rather than empty.
+      sectionFields(fields).map(field => textField(field)),
+      // Secrets: written to the credentials domain, which answers only whether
+      // it holds one.
+      this.secrets.map(entry => ({
         field: entry.field,
         write: (text: string) => this.writeRef(entry.ref, text),
       })),
@@ -146,11 +170,14 @@ export class SocCredentialsCardController {
       // The card always renders: its Host section exists to say the deployment
       // has this platform, and carries no values to wait for.
       available: true,
-      // The credentials domain, not a settings document, is the backing store;
-      // its writability is what the shell reports.
-      writable: this.fields.some(entry => this.states[entry.field]?.writable ?? true),
+      // A card is writable when any of its controls is: the section answers
+      // for the configuration, the credentials domain for the secrets.
+      writable: this.form.shell().writable
+        || this.secrets.some(entry => this.states[entry.field]?.writable ?? true),
       fields: Object.fromEntries(this.fields.map(entry => [entry.field, {
         ...this.form.field(entry.field),
+        // A section field reports no credential state: it shows its value, so
+        // there is nothing for a "configured" badge to add.
         configured: this.states[entry.field]?.configured ?? false,
         writable: this.states[entry.field]?.writable ?? true,
       }])),
@@ -162,9 +189,10 @@ export class SocCredentialsCardController {
    * batch. A failed read leaves the last-known states in place.
    */
   private async readCredentials(): Promise<void> {
-    const response = await this.ctx.remote.credentials.describe(this.fields.map(entry => entry.ref))
+    if (this.secrets.length === 0) return
+    const response = await this.ctx.remote.credentials.describe(this.secrets.map(entry => entry.ref))
     if (!response.ok) return
-    this.states = Object.fromEntries(this.fields.map((entry) => {
+    this.states = Object.fromEntries(this.secrets.map((entry) => {
       const view = response.value[entry.ref]
       // An unknown reference is treated as writable: the control stays usable
       // and the Host is what refuses, rather than the card guessing a refusal.
@@ -182,7 +210,7 @@ export class SocCredentialsCardController {
    * @param ref - the reference the Host reports as changed.
    */
   refreshCredential(ref: string): void {
-    if (!this.fields.some(entry => entry.ref === ref)) return
+    if (!this.secrets.some(entry => entry.ref === ref)) return
     void this.readCredentials()
   }
 
@@ -206,7 +234,7 @@ export class SocCredentialsCardController {
     // whether the value now exists.
     await this.ctx.remote.credentials.set(ref, value)
     await this.readCredentials()
-    const field = this.fields.find(entry => entry.ref === ref)?.field
+    const field = this.secrets.find(entry => entry.ref === ref)?.field
     return field === undefined ? false : this.states[field]?.configured ?? false
   }
 }

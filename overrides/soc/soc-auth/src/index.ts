@@ -49,12 +49,14 @@ export const SOC_TI_NS = 'soc-threat-intel'
  */
 const SocCredentialsSection = z.object({
   socDomain: z.string().default(''),
-  clientId: z.string().default(''),
+  socClientId: z.string().default(''),
+  socUsername: z.string().default(''),
 })
 
 /** The settings section behind the Threat Intelligence card. */
 const SocThreatIntelSection = z.object({
   tiDomain: z.string().default(''),
+  tiUsername: z.string().default(''),
 })
 
 /**
@@ -195,7 +197,8 @@ export async function resolveCredential(ctx: Context, ref: string): Promise<stri
 export function apply(ctx: Context, config: Config | undefined): void {
   const row = config ?? {}
   // The card's namespace, served whether or not this row runs a session.
-  installSocSection(ctx)
+  const sections: SectionSources = {}
+  installSocSection(ctx, sections)
   if (row.settingsOnly === true) return
   const usernameRef = row.usernameRef ?? 'SOC_USERNAME'
   const passwordRef = row.passwordRef ?? 'SOC_PASSWORD'
@@ -213,6 +216,9 @@ export function apply(ctx: Context, config: Config | undefined): void {
       const credentials = ctx.get('credentials')
       const env = launchEnvironmentOf(ctx)
       const out: Record<string, string> = {}
+      // The credentials store first: it is where earlier builds kept these,
+      // and where a machine configured by its launch environment still keeps
+      // them. What the user typed in Settings then wins over both.
       for (const field of SOC_ENDPOINT_FIELDS) {
         const key = credentialRef(endpointRef(field))
         const value = credentials !== undefined
@@ -220,38 +226,80 @@ export function apply(ctx: Context, config: Config | undefined): void {
           : env.get(key)?.value
         if (typeof value === 'string' && value.trim() !== '') out[field] = value.trim()
       }
-      return out
+      return { ...out, ...socEndpointSettings(sections) }
     },
     edrRedirectUri: row.edrRedirectUri,
     siemMgmtClientId: row.siemMgmtClientId,
     nsmRedirectUri: row.nsmRedirectUri,
     credentials: async () => ({
-      username: await resolveCredential(ctx, usernameRef),
+      // The name is configuration, so the card keeps it in the section; the
+      // reference still answers for a machine configured the older way.
+      username: sections.soc?.().socUsername.trim() || await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),
     }),
   })
 
+  // The Threat Intelligence tools read their own card's section through the
+  // service, because the section is installed here — one plugin owns it, and
+  // the card must exist even where no session mounted those tools.
+  service.threatIntelSettings = () => sections.ti?.() ?? { tiDomain: '', tiUsername: '' }
   ctx.provide('socAuth', service)
+}
+
+/**
+ * What the two cards' settings sections currently carry.
+ *
+ * Every non-secret control writes here rather than into the credentials store,
+ * because a settings value can be read back: the card shows what the user
+ * typed instead of an empty box, and they configure a platform once.
+ */
+export interface SectionSources {
+  /** The SOC card's section, or undefined where no settings service attached. */
+  soc?: () => { socDomain: string, socClientId: string, socUsername: string }
+  /** The Threat Intelligence card's section, under the same condition. */
+  ti?: () => { tiDomain: string, tiUsername: string }
+}
+
+/**
+ * The SOC section's values as endpoint fields, dropping the blanks so an
+ * untouched control never masks a value some other layer supplies.
+ * @param sources - the section thunks captured at install.
+ * @returns the endpoint fields the user typed.
+ */
+export function socEndpointSettings(sources: SectionSources): Record<string, string> {
+  const section = sources.soc?.()
+  if (section === undefined) return {}
+  const out: Record<string, string> = {}
+  if (section.socDomain.trim() !== '') out.socDomain = section.socDomain.trim()
+  // The card names it after the platform; soc-auth knows it as the client id.
+  if (section.socClientId.trim() !== '') out.clientId = section.socClientId.trim()
+  return out
 }
 
 /**
  * Publish the settings section the SOC Cloud card is keyed to. `settings` is a
  * Host service; where the deployment has none, the card simply does not appear.
  * @param ctx - the mounting context.
+ * @param sections - filled in with each section's source thunk.
  */
-function installSocSection(ctx: Context): void {
+function installSocSection(ctx: Context, sections: SectionSources): void {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       socDomain: '',
-      clientId: '',
+      socClientId: '',
+      socUsername: '',
     }, {
-      setSource: () => {},
+      // Hold the thunk rather than a copy: it answers with whatever the
+      // section carries at the moment of a sign-in, so a correction in
+      // Settings takes effect on the next one without a restart.
+      setSource: (current) => { sections.soc = current },
       onChange: () => {},
     })
     settingsCtx.settings.installSection(ctx, SOC_TI_NS, SocThreatIntelSection, {
       tiDomain: '',
+      tiUsername: '',
     }, {
-      setSource: () => {},
+      setSource: (current) => { sections.ti = current },
       onChange: () => {},
     })
   })

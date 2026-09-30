@@ -18,14 +18,13 @@ import {
 import type {} from './slot-contract.ts'
 
 /**
- * One control on a card. Every value here is write-only — it travels to the
- * credentials domain and never rides a response — so the control starts blank
- * and reports whether the Host holds a value rather than showing it.
+ * One control on a card, in either of its two forms.
  *
- * Masking is a separate question from write-only: only an actual secret is
- * masked. A platform domain and a sign-in name are configuration the user has
- * to proof-read while typing, and hiding them turns a typo into a login
- * failure with nothing to look at.
+ * A secret is write-only: it travels to the credentials domain, never rides a
+ * response, so it starts blank, masks what is typed, and carries a badge
+ * saying whether the Host holds a value. Everything else is configuration
+ * kept in the card's settings section: it shows its stored value, unmasked, so
+ * the user types a domain once and can proof-read it afterwards.
  * @param props - the field's copy, its staged text, and the edit action.
  * @returns the labelled control.
  */
@@ -40,8 +39,12 @@ function CredentialField(props: {
   text: string
   /** Whether the Host reports a value for this reference. */
   configured: boolean
-  /** Copy describing the configured state. */
-  stateLabel: string
+  /**
+   * Copy describing the configured state, for a control whose value cannot be
+   * read back. Undefined for one that shows its value, where a badge saying it
+   * is configured would only repeat what the control already shows.
+   */
+  stateLabel?: string | undefined
   /** Whether what is typed is masked. */
   masked: boolean
   /** Disables the control — a value sourced elsewhere cannot be written here. */
@@ -53,9 +56,13 @@ function CredentialField(props: {
     <div className={css.field}>
       <div className={css.head}>
         <label className={css.label} htmlFor={props.id}>{props.label}</label>
-        <span className={css.badges}>
-          <Tag tone={props.configured ? 'neutral' : 'quiet'}>{props.stateLabel}</Tag>
-        </span>
+        {props.stateLabel === undefined
+          ? null
+          : (
+            <span className={css.badges}>
+              <Tag tone={props.configured ? 'neutral' : 'quiet'}>{props.stateLabel}</Tag>
+            </span>
+          )}
       </div>
       <input
         id={props.id}
@@ -117,7 +124,10 @@ function renderCard(
             text={control.text}
             masked={secret === true}
             configured={control.configured}
-            stateLabel={control.configured ? t('socValueSet') : t('socValueUnset')}
+            // Only a write-only control needs the badge; the rest show their value.
+            stateLabel={secret === true
+              ? (control.configured ? t('socValueSet') : t('socValueUnset'))
+              : undefined}
             onEdit={(text) => { props.edit(field, text) }}
           />
         )

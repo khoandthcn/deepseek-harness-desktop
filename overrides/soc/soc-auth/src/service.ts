@@ -210,6 +210,15 @@ export class SocAuthService {
   /** The options this service was built with, re-read when endpoints change. */
   private readonly options: SocAuthServiceOptions
 
+  /**
+   * What the Threat Intelligence card's settings section carries. The plugin
+   * replaces this once it has installed the section; the tools read it through
+   * the service because the section belongs to the plugin that installs it,
+   * and that one must publish the card even where no tools are mounted.
+   */
+  threatIntelSettings: () => { tiDomain: string, tiUsername: string }
+    = () => ({ tiDomain: '', tiUsername: '' })
+
   /** Endpoint values read from the app's own configuration at the last login. */
   private configured: Record<string, string> = {}
 
