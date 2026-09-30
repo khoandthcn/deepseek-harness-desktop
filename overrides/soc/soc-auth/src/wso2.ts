@@ -205,11 +205,21 @@ export async function establishAppSession(
   // authorize → system callback: with the SSO cookie the authorize skips the
   // login form and 302s straight to the callback carrying `code`. Cap the hops
   // so a misconfiguration surfaces as an error rather than an infinite loop.
+  const callbackUrl = new URL(callbackBase)
   for (let hop = 0; hop < 8; hop++) {
     const res = await request(next)
     if (!REDIRECT_STATUSES.has(res.status)) {
+      // Not every gatekeeper answers with a Location header: one may hand back
+      // a page that carries the callback and bounces from script or a meta
+      // refresh, which is how the SIEM portal already behaves. Take the code
+      // from the page when it is there, and otherwise say what the page was,
+      // because "HTTP 200" alone is not something a user can act on.
+      const body = await res.text()
+      const code = extractCodeFromHtml(body, callbackUrl.origin, callbackUrl.pathname)
+      if (code !== undefined) return { code, cookies: jar.snapshot() }
       throw new SocAuthError(
-        `SOC auth: the ${opts.clientId} authorize did not redirect to its callback (HTTP ${res.status}).`,
+        `SOC auth: the ${opts.clientId} authorize did not redirect to its callback `
+        + `(HTTP ${res.status}) and the page carried no code: ${describeBody(body)}`,
       )
     }
     const location = res.headers.get('location')
@@ -286,6 +296,24 @@ function paramNamesOf(u: URL): string {
   const afterQ = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : hash
   const h = hash ? [...new URLSearchParams(afterQ).keys()] : []
   return `query=[${q.join(',')}] hash=[${h.join(',')}]${hash ? ' (has fragment)' : ''}`
+}
+
+/**
+ * A one-line, redacted account of an unexpected page, for an error a user or a
+ * maintainer can act on: whether it is the WAF's bootstrap, a login form, or
+ * something else entirely, plus its title and opening.
+ * @param body - the raw response body.
+ * @returns the description to quote in an error.
+ */
+function describeBody(body: string): string {
+  const title = /<title[^>]*>([^<]{0,80})<\/title>/i.exec(body)?.[1]?.trim()
+  const kind = body.includes(D1N_COOKIE)
+    ? 'the WAF bootstrap page, whose cookie this build could not parse'
+    : /sessionDataKey|login\.do|name=["']password["']/i.test(body)
+      ? 'a login form, so the SSO session did not carry'
+      : 'an unrecognized page'
+  return `${kind}${title === undefined || title === '' ? '' : ` (title: ${title})`}; `
+    + `first bytes: ${redactSecrets(body).slice(0, 200)}`
 }
 
 /** Names whose value is a credential wherever it appears, in JSON or in a URL. */

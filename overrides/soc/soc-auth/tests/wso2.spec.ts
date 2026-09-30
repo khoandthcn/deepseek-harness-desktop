@@ -229,6 +229,36 @@ describe('establishAppSession', () => {
     expect(authorize.searchParams.get('redirect_uri')).toBe(CALLBACK)
   })
 
+  it('takes the code from a page that bounces from script rather than a header', async () => {
+    // Not every gatekeeper answers with a Location; the SIEM portal already
+    // hands back a page carrying the callback, and a system that starts doing
+    // the same must not read as a bare "HTTP 200".
+    const f = sequenceFetch([html(
+      `<html><body><script>window.location="${CALLBACK}?code=APPCODE&session_state=xyz"</script></body></html>`,
+    )])
+    const { code } = await establishAppSession({
+      iamUrl: IAM,
+      clientId: 'SOAR_CLIENT',
+      redirectUri: CALLBACK,
+      cookies: { commonAuthId: 'abc123' },
+      fetchImpl: f as any,
+    })
+    expect(code).toBe('APPCODE')
+  })
+
+  it('says what the page was when it carries no code at all', async () => {
+    const f = sequenceFetch([html('<html><head><title>Access denied</title></head><body>blocked</body></html>')])
+    const error = await establishAppSession({
+      iamUrl: IAM,
+      clientId: 'SOAR_CLIENT',
+      redirectUri: CALLBACK,
+      cookies: { commonAuthId: 'abc123' },
+      fetchImpl: f as any,
+    }).catch((cause: Error) => cause)
+    expect(String(error)).toMatch(/HTTP 200/)
+    expect(String(error)).toMatch(/Access denied/)
+  })
+
   it('fails with a re-login message when the SSO session has lapsed', async () => {
     // No SSO: authorize bounces back to the login form.
     const f = sequenceFetch([redirect(`${IAM}/authenticationendpoint/login.do?sessionDataKey=K1`)])
