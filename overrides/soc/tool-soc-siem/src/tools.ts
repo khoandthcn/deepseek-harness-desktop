@@ -27,6 +27,8 @@ export interface SiemAuthLike {
 /** The slice of soc-client's `SocHttp` this tool needs. */
 export interface SiemHttpLike {
   postJson<T = unknown>(path: string, body: unknown): Promise<T>
+  /** A POST carrying no body at all, for a route whose front end sends none. */
+  postEmpty<T = unknown>(path: string): Promise<T>
 }
 
 /**
@@ -369,7 +371,7 @@ export function createSiemToolDefs({ http, auth, now, newQueryId }: CreateSiemTo
         + ' user names a customer rather than a tenant id.',
       parameters: {},
       output: JSON_OUTPUT,
-      execute: guarded(async () => parseSiemTenants(await http.postJson(SIEM_PATHS.tenantSearch, {}))),
+      execute: guarded(async () => parseSiemTenants(await http.postEmpty(SIEM_PATHS.tenantSearch))),
     },
     {
       name: 'siem_list_event_fields',

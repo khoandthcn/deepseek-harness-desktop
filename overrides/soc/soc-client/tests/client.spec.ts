@@ -21,6 +21,17 @@ describe('SocHttp', () => {
     expect(call[1].headers['content-type']).toMatch(/application\/json/)
     expect(JSON.parse(call[1].body)).toEqual({ a: 1 })
   })
+  it('posts nothing at all when asked for an empty POST, as a front end does', async () => {
+    // Not `{}`: a gateway that drops a request carrying a body where its front
+    // end sends none answers 444, which reads like an outage.
+    const f = stubFetch(200, JSON.stringify({ ok: true }))
+    const http = new SocHttp('https://siem.example', { fetchImpl: f })
+    expect(await http.postEmpty('/x')).toEqual({ ok: true })
+    const call = callsOf(f)[0]!
+    expect(call[1].method).toBe('POST')
+    expect(call[1].body).toBe('')
+    expect(call[1].headers['content-type']).toMatch(/application\/json/)
+  })
   it('maps 401 to SocAuthError', async () => {
     const http = new SocHttp('https://x', { fetchImpl: stubFetch(401, '{}') })
     await expect(http.postJson('/x', {})).rejects.toBeInstanceOf(SocAuthError)

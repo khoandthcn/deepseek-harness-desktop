@@ -23,7 +23,11 @@ function stubHttp(responses: Record<string, unknown>) {
     if (!(path in responses)) throw new Error(`unexpected POST ${path}`)
     return responses[path]
   })
-  return { postJson }
+  const postEmpty = vi.fn(async (path: string) => {
+    if (!(path in responses)) throw new Error(`unexpected POST ${path}`)
+    return responses[path]
+  })
+  return { postJson, postEmpty }
 }
 
 /** Structural stand-in for soc-auth's `SocAuthService`. */
@@ -141,7 +145,10 @@ describe('siem_list_tenants', () => {
       count: 2,
       tenants: [{ tenantId: 'acme', fullName: 'Acme Corp' }, { tenantId: 'beta', fullName: 'Beta' }],
     })
-    expect(callsOf(http.postJson)[0]![0]).toBe('/cymtenantapi/api/v1/tenant/socp_search')
+    // Sent with no body at all, as SIEM's own front end does: the gateway in
+    // front of this route drops the connection (444) when `{}` arrives.
+    expect(callsOf(http.postEmpty)[0]![0]).toBe('/cymtenantapi/api/v1/tenant/socp_search')
+    expect(http.postJson).not.toHaveBeenCalled()
   })
 
   it('rejects a payload without items', async () => {

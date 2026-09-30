@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { SocAuthService } from '../src/service.ts'
+import { cookiesFor, parseSoarClientId, SocAuthService } from '../src/service.ts'
 
 /** vitest types `mock.calls` from the stub's own signature; these tests read
  * positional args the stubs do not declare, so narrow once here. */
@@ -97,6 +97,9 @@ function makeService(
     clientId: 'cid',
     redirectUri: REDIRECT_URI,
     soarBaseUrl: SOAR,
+    // Pinned so these tests drive the exchange itself; discovering it from
+    // SOAR's env.js has tests of its own below.
+    soarClientId: 'SOAR_CLIENT',
     credentials: async () => ({ username: 'alice', password: PASSWORD }),
     fetchImpl,
     now,
@@ -162,8 +165,9 @@ describe('SocAuthService.soarBearer', () => {
     expect(String(init.headers['content-type'])).toMatch(/application\/json/)
     expect(JSON.parse(init.body)).toEqual({
       tenant: 'MASTER',
-      // no soarClientId configured: SOAR's authorize reuses the portal's client
-      client_id: 'cid',
+      // SOAR's own client, not the portal's ('cid'): presenting the portal's
+      // is what got the login page back instead of a code.
+      client_id: 'SOAR_CLIENT',
       scopes: SCOPE,
     })
     expect(String(init.headers['cookie'])).toContain('D1N=waf-cookie')
@@ -615,6 +619,7 @@ describe('SocAuthService and the identity server\'s rotating session', () => {
       clientId: 'cid',
       redirectUri: REDIRECT_URI,
       soarBaseUrl: SOAR,
+      soarClientId: 'SOAR_CLIENT',
       siemBaseUrl: SIEM,
       credentials: async () => ({ username: 'alice', password: PASSWORD }),
       fetchImpl: f as any,
@@ -623,6 +628,63 @@ describe('SocAuthService and the identity server\'s rotating session', () => {
     await svc.login(OTP)
     await svc.siemToken()
     expect(await svc.soarBearer(SCOPE)).toBe('BEARER')
+  })
+})
+
+describe('which cookies go to which host', () => {
+  const jar = { commonAuthId: 'sso', JSESSIONID: 'iam-node', D1N: 'waf' }
+
+  it('sends the identity server its own session', () => {
+    expect(cookiesFor(`${IAM}/authen/callback`, IAM, jar)).toEqual(jar)
+  })
+
+  it('sends any other host only the WAF cookie, as a browser would', () => {
+    // The SSO cookie would hand that host the user's whole single sign-on, and
+    // the identity server's JSESSIONID means nothing to another gateway.
+    expect(cookiesFor(`${SOAR}/authen/callback`, IAM, jar)).toEqual({ D1N: 'waf' })
+    expect(cookiesFor('https://nsm.example/api/v1/sso/login/', IAM, jar)).toEqual({ D1N: 'waf' })
+    expect(cookiesFor('https://nsm.example/x', IAM, { commonAuthId: 'sso' })).toEqual({})
+  })
+})
+
+describe('SOAR\'s own client id', () => {
+  it('is read out of the env.js SOAR publishes for its own front end', () => {
+    const js = "window.__env.oAuthClientId = 'soar_portal';\nwindow.__env.oAuthClientIdIAM = 'SOAR_CLIENT';"
+    expect(parseSoarClientId(js)).toBe('SOAR_CLIENT')
+    expect(parseSoarClientId('window.__env = {}')).toBeUndefined()
+  })
+
+  it('is fetched before SOAR\'s authorize, which then presents it rather than the portal\'s', async () => {
+    // Authorizing SOAR under the portal's client gets the login page back:
+    // that client may not redirect to SOAR's callback.
+    const f = stubFetch([json(200, { access_token: 'BEARER', expires_in: 3600 })])
+    const wrapped = vi.fn(async (url: string, init?: any) => {
+      if (String(url) === `${SOAR}/env.js`) {
+        return new Response("window.__env.oAuthClientIdIAM = 'SOAR_CLIENT';", { status: 200 })
+      }
+      return f(url, init)
+    })
+    const svc = makeService(wrapped, () => 1_000_000, { soarClientId: undefined })
+    await svc.login(OTP)
+    expect(await svc.soarBearer(SCOPE)).toBe('BEARER')
+    const authorize = callsOf(wrapped).map(c => String(c[0]))
+      .find(u => u.startsWith(`${IAM}/oauth2/authorize`) && u.includes(encodeURIComponent(`${SOAR}/callback`)))
+    expect(new URL(authorize!).searchParams.get('client_id')).toBe('SOAR_CLIENT')
+    const access = callsOf(wrapped).find(c => String(c[0]).includes('/access_control/access'))!
+    expect(JSON.parse(access[1].body).client_id).toBe('SOAR_CLIENT')
+  })
+
+  it('names the setting that pins it when SOAR publishes none', async () => {
+    const f = stubFetch([])
+    const wrapped = vi.fn(async (url: string, init?: any) => {
+      if (String(url) === `${SOAR}/env.js`) return new Response('window.__env = {};', { status: 200 })
+      return f(url, init)
+    })
+    const svc = makeService(wrapped, () => 1_000_000, { soarClientId: undefined })
+    await svc.login(OTP)
+    const err = await expectNoSecrets(svc.soarBearer(SCOPE))
+    expect(err.message).toMatch(/names no client id/)
+    expect(err.message).toContain('SOC_SOAR_CLIENT_ID')
   })
 })
 

@@ -19,6 +19,9 @@ export interface SocHttpOptions {
   d1nCookie?: string | undefined
 }
 
+/** Marks a POST that carries no body, as distinct from one carrying `{}`. */
+const EMPTY_BODY: unique symbol = Symbol('empty body')
+
 /**
  * Minimal fetch-based JSON HTTP client for SOC upstreams.
  *
@@ -49,6 +52,16 @@ export class SocHttp {
 
   async postJson<T = unknown>(path: string, body: unknown): Promise<T> {
     return this.request<T>('POST', path, body)
+  }
+
+  /**
+   * POST with no body at all, for an endpoint whose own front end sends none.
+   * Some routes sit behind a gateway that drops the connection (nginx 444)
+   * when a body arrives where the front end never sends one, so `{}` is not a
+   * safe stand-in for "nothing".
+   */
+  async postEmpty<T = unknown>(path: string): Promise<T> {
+    return this.request<T>('POST', path, EMPTY_BODY)
   }
 
   async getJson<T = unknown>(path: string): Promise<T> {
@@ -83,7 +96,9 @@ export class SocHttp {
       method,
       headers: this.buildHeaders(hasBody),
     }
-    if (hasBody) init.body = JSON.stringify(body)
+    // The front end declares JSON and sends zero bytes; mirror it exactly.
+    if (body === EMPTY_BODY) init.body = ''
+    else if (hasBody) init.body = JSON.stringify(body)
 
     let res: Response
     try {

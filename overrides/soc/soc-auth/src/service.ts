@@ -44,6 +44,37 @@ const SIEM_DEFAULT_TTL_MS = 300_000
  */
 const SSO_COOKIES = ['commonAuthId', 'opbs', 'JSESSIONID', 'samlssoTokenId', D1N_COOKIE]
 
+/**
+ * SOAR's own client id, as its `env.js` publishes it for its single-page app.
+ * @param js - the body of `env.js`.
+ * @returns the client id, or undefined when the file names none.
+ */
+export function parseSoarClientId(js: string): string | undefined {
+  const match = /oAuthClientIdIAM\s*=\s*['"]([^'"]+)['"]/.exec(js)
+  return match?.[1]?.trim() || undefined
+}
+
+/**
+ * The cookies a request to `url` should carry: everything when it goes to the
+ * identity server, and only the WAF's otherwise. The jar here is one flat map
+ * for every host, so this is where the host boundary a browser keeps by itself
+ * is put back.
+ * @param url - where the request is going.
+ * @param iamUrl - the identity server's base URL.
+ * @param cookies - the whole jar.
+ * @returns the cookies for that host.
+ */
+export function cookiesFor(url: string, iamUrl: string, cookies: Record<string, string>): Record<string, string> {
+  let toIam = false
+  try {
+    toIam = new URL(url).origin === new URL(iamUrl).origin
+  } catch {
+    toIam = false
+  }
+  if (toIam) return { ...cookies }
+  return cookies[D1N_COOKIE] === undefined ? {} : { [D1N_COOKIE]: cookies[D1N_COOKIE] }
+}
+
 const SIEM_LOGIN_AUDIENCE = 'cym_api'
 const SIEM_LOGIN_SCOPE = 'login'
 const SIEM_PORTAL_AUDIENCE = 'cym_portal'
@@ -306,7 +337,11 @@ export class SocAuthService {
       missing: supplied.missing.filter(key => (overridden[key] ?? '') === ''),
     }
     this.tenant = opts.tenant ?? supplied.values.tenant ?? 'MASTER'
-    this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? this.clientId
+    // Not the portal's client: SOAR is registered with the identity server
+    // under its own, and authorizing with the portal's gets the login page back
+    // because that client may not redirect to SOAR's callback. Left blank
+    // unless pinned, and read from SOAR itself before its first sign-in.
+    this.soarClientId = opts.soarClientId ?? supplied.values.soarClientId ?? ''
     this.soarRedirectUri = opts.soarRedirectUri ?? `${this.soarBaseUrl}/callback`
     this.soarAuthenUrl = (opts.soarAuthenUrl ?? `${this.soarBaseUrl}/authen`).replace(/\/+$/, '')
     this.edrBaseUrl = trimmed('edrBaseUrl', opts.edrBaseUrl)
@@ -489,6 +524,46 @@ export class SocAuthService {
   }
 
   /**
+   * Learn SOAR's own client id from SOAR, unless the deployment pinned one.
+   *
+   * SOAR publishes it unauthenticated in `env.js` as `oAuthClientIdIAM`, which
+   * is exactly where its own single-page app reads it from. Reading it there
+   * keeps every platform's identifier out of this build and off the user's
+   * plate: they would otherwise have to find and type a second client id that
+   * nothing in the product ever shows them.
+   * @param doFetch - the fetch implementation to drive.
+   * @throws when SOAR does not publish one, naming the setting that pins it.
+   */
+  private async ensureSoarClientId(doFetch: FetchLike): Promise<void> {
+    if (this.soarClientId !== '') return
+    const url = `${this.soarBaseUrl}/env.js`
+    const get = async (d1n?: string): Promise<string> => {
+      let res: Response
+      try {
+        res = await doFetch(url, d1n === undefined ? {} : { headers: { cookie: `${D1N_COOKIE}=${d1n}` } })
+      } catch (cause) {
+        throw new SocAuthError(`SOC auth: reading SOAR's client id (${url}) failed (network error).`, { cause })
+      }
+      if (res.status !== 200) {
+        throw new SocAuthError(`SOC auth: reading SOAR's client id (${url}) returned HTTP ${res.status}.`)
+      }
+      return res.text()
+    }
+    let body = await get(this.cookies[D1N_COOKIE])
+    // The WAF may answer with its cookie bootstrap first; adopt it once.
+    const d1n = parseD1nBootstrap(body)
+    if (d1n !== undefined) body = await get(d1n)
+    const found = parseSoarClientId(body)
+    if (found === undefined) {
+      throw new SocAuthError(
+        `SOC auth: SOAR's ${url} names no client id (oAuthClientIdIAM), so its sign-in cannot start. `
+        + 'Pin it as soarClientId in soc-endpoints.json, or SOC_SOAR_CLIENT_ID in the environment.',
+      )
+    }
+    this.soarClientId = found
+  }
+
+  /**
    * Acquire the SOAR per-system session: run SOAR's own authorize on top of the
    * SSO login, exchange the returned code at `authen/callback` for a
    * `session_token`, and build the `token` cookie SOAR keys on. That cookie is
@@ -501,6 +576,7 @@ export class SocAuthService {
   private async acquireSoarSession(
     doFetch: FetchLike,
   ): Promise<{ cookies: Record<string, string>, sessionToken: string }> {
+    await this.ensureSoarClientId(doFetch)
     const { sessionToken, idToken, cookies } = await this.acquireSessionToken(doFetch, {
       system: 'SOAR',
       clientId: this.soarClientId,
@@ -538,7 +614,12 @@ export class SocAuthService {
       fetchImpl: this.fetchImpl,
     })
     this.adoptSsoCookies(generation, cookies)
-    const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')
+    // The identity server's session cookies go only to the identity server. A
+    // browser would never send them to another host, and handing the SSO
+    // cookie to a system that did not issue it gives that system the user's
+    // whole single sign-on.
+    const cookieHeader = Object.entries(cookiesFor(params.callbackUrl, this.iamUrl, cookies))
+      .map(([k, v]) => `${k}=${v}`).join('; ')
     let res: Response
     try {
       res = await doFetch(params.callbackUrl, {
@@ -947,9 +1028,11 @@ export class SocAuthService {
       scope: 'openid profile email read_user',
     })
     const url = `${this.nsmBaseUrl}/api/v1/sso/login/`
-    // Carry the login jar: the WAF cookie rides here too, and a cookie-less
-    // request is answered by its bootstrap page rather than by NSM.
-    let jar: Record<string, string> = { ...cookies }
+    // Only what a browser would hold for this host: the WAF cookie, without
+    // which the request is answered by its bootstrap page. The identity
+    // server's own cookies stay with it — among them a JSESSIONID that means
+    // nothing to NSM's gateway, which may route by it.
+    let jar: Record<string, string> = cookiesFor(url, this.iamUrl, cookies)
     const post = async (afterBootstrap = false): Promise<Response> => {
       const cookie = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ')
       let response: Response
