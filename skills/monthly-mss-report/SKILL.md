@@ -26,9 +26,9 @@ Speak to the user in their language. The report itself is in English, as the tem
    A page of 50 results tells you about 50 results; the total is the `count` field of the response.
 3. **Record where each figure came from** in `sources`, as you write the figure — the tool and its
    filters, or the user's own words. `check` rejects a figure with no source.
-4. **What no tool can answer, ask.** SLA results, APT count, incidents, Tier 3 cases, content tickets
-   and the optimization list are known to the service team, not to the tools. Ask the user; do not
-   look for a stand-in.
+4. **What no tool can answer, ask.** SLA results, APT count, incidents, content tickets and the
+   optimization list are known to the service team, not to the tools. Ask the user; do not look for a
+   stand-in.
 5. **If a figure cannot be obtained, leave it `null`** and say so. A stamped draft with a visible gap
    is a correct outcome. A complete-looking report with an invented number is not.
 6. **`check` decides, not you.** If totals do not add up, the data is wrong: re-query, do not adjust a
@@ -59,8 +59,8 @@ Speak to the user in their language. The report itself is in English, as the tem
    It prints three lists: figures still to collect with tools, figures to ask the user for, and
    errors. Fix errors by re-querying.
 5. **Ask the user for the rest**, in one question set built from the "ASK THE USER" list: SLA results
-   for this month and last month per tier, tickets processed on time, Tier 3 cases and any deducted
-   from the SLA with the reason, APT count, incidents, content tickets, rules optimized this month.
+   for this month and last month per tier, tickets processed on time, Tier 3 cases deducted from the
+   SLA with the reason, APT count, incidents, content tickets, rules optimized this month.
    Record each answer with `"by": "user"` and what they said.
 6. **Narrative.** The only free text is `tier1.commentary` (why the alert volume changed against last
    month), incident summaries, and `problems`. Draft them from the collected figures only, show them to

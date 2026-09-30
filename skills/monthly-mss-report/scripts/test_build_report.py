@@ -66,8 +66,11 @@ class CheckTests(unittest.TestCase):
         paths = [path for path, _ in findings.needs_input]
         self.assertIn('tier1.alert_total', paths)
         self.assertIn('tier3.cases_total', paths)
-        self.assertIn('tier1.alert_total', br.FROM_TOOLS)
-        self.assertNotIn('tier3.cases_total', br.FROM_TOOLS)
+        self.assertIn('tier1.sla.current', paths)
+        # A case is a ticket, so its count is the platform's to answer; whether
+        # the SLA was met is the service team's.
+        self.assertIn('tier3.cases_total', br.FROM_TOOLS)
+        self.assertNotIn('tier1.sla.current', br.FROM_TOOLS)
 
     def test_a_deduction_needs_its_reason(self):
         findings = changed(lambda d: d['tier3'].update({'exclusion_reason': ''}))

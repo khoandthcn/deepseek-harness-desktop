@@ -77,7 +77,7 @@ SOURCE_KINDS = ('tool', 'user')
 #: optimised — and is asked of the user rather than looked for.
 FROM_TOOLS = (
     'tier1.alert_total', 'tier1.by_solution', 'tier1.by_category', 'tier1.by_level',
-    'tier1.top_rules', 'tier1.top_objects', 'tier2.tickets_total',
+    'tier1.top_rules', 'tier1.top_objects', 'tier2.tickets_total', 'tier3.cases_total',
     'coverage.nsm', 'coverage.siem', 'coverage.edr',
     'appendix_siem_offline', 'appendix_edr_offline',
 )

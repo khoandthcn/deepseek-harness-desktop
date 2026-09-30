@@ -218,8 +218,12 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
     {
       name: 'soar_search_tickets',
       description:
-        'Search SOAR tickets (cases/incidents). Use it for investigation-level questions: which'
-        + ' cases are open, what a case contains, the case a user quotes by its `case_id`.'
+        'Search SOAR tickets. A ticket is what the platform also calls a case or an incident — there'
+        + ' is no separate case search. Use it for investigation-level questions: which cases are'
+        + ' open, what a case contains, the case a user quotes by its `case_id`; and for counts, by'
+        + ' reading `count` with `size: 1`. Fields a query can filter on include `created`,'
+        + ' `tenant`, `status`, `severity`, `type`, `assigned_group` (the handling tier, e.g.'
+        + ' "tier2", "tier3") and `sla_expired` (true once the ticket missed its SLA).'
         + SOAR_NOTES,
       parameters: {
         query: {
