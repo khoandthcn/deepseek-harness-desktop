@@ -197,8 +197,7 @@ export async function resolveCredential(ctx: Context, ref: string): Promise<stri
 export function apply(ctx: Context, config: Config | undefined): void {
   const row = config ?? {}
   // The card's namespace, served whether or not this row runs a session.
-  const sections: SectionSources = {}
-  installSocSection(ctx, sections)
+  installSocSection(ctx)
   if (row.settingsOnly === true) return
   const usernameRef = row.usernameRef ?? 'SOC_USERNAME'
   const passwordRef = row.passwordRef ?? 'SOC_PASSWORD'
@@ -226,7 +225,7 @@ export function apply(ctx: Context, config: Config | undefined): void {
           : env.get(key)?.value
         if (typeof value === 'string' && value.trim() !== '') out[field] = value.trim()
       }
-      return { ...out, ...socEndpointSettings(sections) }
+      return { ...out, ...socEndpointSettings(ctx) }
     },
     edrRedirectUri: row.edrRedirectUri,
     siemMgmtClientId: row.siemMgmtClientId,
@@ -234,7 +233,7 @@ export function apply(ctx: Context, config: Config | undefined): void {
     credentials: async () => ({
       // The name is configuration, so the card keeps it in the section; the
       // reference still answers for a machine configured the older way.
-      username: sections.soc?.().socUsername.trim() || await resolveCredential(ctx, usernameRef),
+      username: readSection(ctx, SOC_CREDENTIALS_NS).socUsername ?? await resolveCredential(ctx, usernameRef),
       password: await resolveCredential(ctx, passwordRef),
     }),
   })
@@ -242,65 +241,94 @@ export function apply(ctx: Context, config: Config | undefined): void {
   // The Threat Intelligence tools read their own card's section through the
   // service, because the section is installed here — one plugin owns it, and
   // the card must exist even where no session mounted those tools.
-  service.threatIntelSettings = () => sections.ti?.() ?? { tiDomain: '', tiUsername: '' }
+  service.threatIntelSettings = () => {
+    const section = readSection(ctx, SOC_TI_NS)
+    return { tiDomain: section.tiDomain ?? '', tiUsername: section.tiUsername ?? '' }
+  }
   ctx.provide('socAuth', service)
 }
 
 /**
- * What the two cards' settings sections currently carry.
+ * Read one card's settings section, whichever row installed it.
  *
- * Every non-secret control writes here rather than into the credentials store,
- * because a settings value can be read back: the card shows what the user
- * typed instead of an empty box, and they configure a platform once.
+ * This plugin mounts twice: once on the Host, so the two cards exist before
+ * any session, and once inside the preset that runs the tools. A namespace may
+ * only be registered once, so the second mount cannot hold a source thunk of
+ * its own — it reads the registry instead, which answers for whoever owns the
+ * namespace and always with the current value.
+ *
+ * @param ctx - the mounting context.
+ * @param ns - the card's namespace.
+ * @returns the section's non-blank string fields, trimmed.
  */
-export interface SectionSources {
-  /** The SOC card's section, or undefined where no settings service attached. */
-  soc?: () => { socDomain: string, socClientId: string, socUsername: string }
-  /** The Threat Intelligence card's section, under the same condition. */
-  ti?: () => { tiDomain: string, tiUsername: string }
+export function readSection(ctx: Context, ns: string): Record<string, string> {
+  const settings = ctx.get('settings')
+  const section = settings?.get(ns as never)
+  if (typeof section !== 'object' || section === null) return {}
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(section as Record<string, unknown>)) {
+    // A blank control must fall through to whatever else supplies the field,
+    // rather than masking the machine's file or environment with an empty
+    // string.
+    if (typeof value === 'string' && value.trim() !== '') out[key] = value.trim()
+  }
+  return out
 }
 
 /**
- * The SOC section's values as endpoint fields, dropping the blanks so an
- * untouched control never masks a value some other layer supplies.
- * @param sources - the section thunks captured at install.
+ * The SOC card's section as endpoint fields. The card names its controls after
+ * the platform; sign-in knows one of them by another name.
+ * @param ctx - the mounting context.
  * @returns the endpoint fields the user typed.
  */
-export function socEndpointSettings(sources: SectionSources): Record<string, string> {
-  const section = sources.soc?.()
-  if (section === undefined) return {}
+export function socEndpointSettings(ctx: Context): Record<string, string> {
+  const section = readSection(ctx, SOC_CREDENTIALS_NS)
   const out: Record<string, string> = {}
-  if (section.socDomain.trim() !== '') out.socDomain = section.socDomain.trim()
-  // The card names it after the platform; soc-auth knows it as the client id.
-  if (section.socClientId.trim() !== '') out.clientId = section.socClientId.trim()
+  if (section.socDomain !== undefined) out.socDomain = section.socDomain
+  if (section.socClientId !== undefined) out.clientId = section.socClientId
   return out
 }
 
 /**
  * Publish the settings section the SOC Cloud card is keyed to. `settings` is a
  * Host service; where the deployment has none, the card simply does not appear.
+ * Installing it twice throws, and this plugin does mount twice — on the Host
+ * for the cards, and inside the preset for the tools — so the second mount
+ * lets the first keep the namespace and reads it through {@link readSection}.
  * @param ctx - the mounting context.
- * @param sections - filled in with each section's source thunk.
  */
-function installSocSection(ctx: Context, sections: SectionSources): void {
+function installSocSection(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
+    install(settingsCtx, SOC_CREDENTIALS_NS, SocCredentialsSection, {
       socDomain: '',
       socClientId: '',
       socUsername: '',
-    }, {
-      // Hold the thunk rather than a copy: it answers with whatever the
-      // section carries at the moment of a sign-in, so a correction in
-      // Settings takes effect on the next one without a restart.
-      setSource: (current) => { sections.soc = current },
-      onChange: () => {},
     })
-    settingsCtx.settings.installSection(ctx, SOC_TI_NS, SocThreatIntelSection, {
+    install(settingsCtx, SOC_TI_NS, SocThreatIntelSection, {
       tiDomain: '',
       tiUsername: '',
-    }, {
-      setSource: (current) => { sections.ti = current },
-      onChange: () => {},
     })
   })
+
+  /**
+   * Install one section unless another mount of this plugin already holds the
+   * namespace. The registry throws on a second registration, and the throw is
+   * the whole failure mode worth guarding: it aborts this mount's remaining
+   * setup, which is how the tools ended up unable to read their own settings.
+   * @param settingsCtx - the context with `settings` resolved.
+   * @param ns - the namespace to install.
+   * @param schema - the section's schema.
+   * @param entry - the composition entry, all fields blank.
+   */
+  function install<T>(
+    settingsCtx: { settings: { installSection: (...args: never[]) => void, get: (ns: never) => unknown } },
+    ns: string,
+    schema: unknown,
+    entry: T,
+  ): void {
+    if (settingsCtx.settings.get(ns as never) !== undefined) return
+    settingsCtx.settings.installSection(
+      ...([ctx, ns, schema, entry, { setSource: () => {}, onChange: () => {} }] as never[]),
+    )
+  }
 }

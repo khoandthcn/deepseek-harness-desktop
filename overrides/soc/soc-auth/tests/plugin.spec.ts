@@ -12,7 +12,7 @@ import * as socAuth from '../src/index.ts'
 /** A settings service double recording what a plugin installs. */
 function settingsDouble(values: Record<string, Record<string, unknown>> = {}) {
   const installed: { ns: string, entry: Record<string, unknown> }[] = []
-  let source: (() => Record<string, unknown>) | undefined
+  const sections = new Map<string, Record<string, unknown>>()
   const settings = {
     installSection: vi.fn((
       _owner: unknown,
@@ -21,13 +21,18 @@ function settingsDouble(values: Record<string, Record<string, unknown>> = {}) {
       entry: Record<string, unknown>,
       hooks: { setSource: (current: () => Record<string, unknown>) => void, onChange: () => void },
     ) => {
+      // The real registry throws on a second registration of one namespace,
+      // which is what this plugin's two mounts would do without the guard.
+      if (sections.has(ns)) throw new Error(`settings namespace "${ns}" is already registered`)
       installed.push({ ns, entry })
       // What the section carries: the entry's defaults unless this test put
       // something in it, which is what a user typing into the card produces.
-      hooks.setSource(() => ({ ...entry, ...values[ns] }))
+      sections.set(ns, { ...entry, ...values[ns] })
+      hooks.setSource(() => sections.get(ns) ?? entry)
     }),
+    get: vi.fn((ns: string) => sections.get(ns)),
   }
-  return { settings, installed, source }
+  return { settings, installed, sections }
 }
 
 async function mount(
@@ -88,18 +93,32 @@ describe('what the cards keep in their sections', () => {
     })
   })
 
-  it('reads the SOC section under the names soc-auth knows', () => {
+  it('reads the SOC section under the names soc-auth knows', async () => {
     // The card names it after the platform; sign-in knows it as the client id.
-    expect(socAuth.socEndpointSettings({
-      soc: () => ({ socDomain: ' soc.example.com ', socClientId: 'CID', socUsername: 'u' }),
-    })).toEqual({ socDomain: 'soc.example.com', clientId: 'CID' })
+    const { ctx } = await mount({}, {
+      [socAuth.SOC_CREDENTIALS_NS]: { socDomain: ' soc.example.com ', socClientId: 'CID', socUsername: 'u' },
+    })
+    expect(socAuth.socEndpointSettings(ctx)).toEqual({ socDomain: 'soc.example.com', clientId: 'CID' })
   })
 
-  it('lets a blank control fall through to whatever else supplies the field', () => {
+  it('lets a blank control fall through to whatever else supplies the field', async () => {
     // An untouched control must not mask the machine's file or environment.
-    expect(socAuth.socEndpointSettings({
-      soc: () => ({ socDomain: '', socClientId: '   ', socUsername: '' }),
-    })).toEqual({})
-    expect(socAuth.socEndpointSettings({})).toEqual({})
+    const { ctx } = await mount({}, { [socAuth.SOC_CREDENTIALS_NS]: { socClientId: '   ' } })
+    expect(socAuth.socEndpointSettings(ctx)).toEqual({})
+  })
+
+  it('leaves the namespace to the mount that already owns it', async () => {
+    // This plugin mounts twice: on the Host for the cards, in the preset for
+    // the tools. The second must not abort on the registry's refusal.
+    const ctx = new Context()
+    const double = settingsDouble({ [socAuth.SOC_CREDENTIALS_NS]: { socDomain: 'soc.example.com' } })
+    ctx.provide('settings')
+    ctx.settings = double.settings as never
+    await ctx.plugin(socAuth, { settingsOnly: true } as never)
+    await ctx.plugin(socAuth, {} as never)
+    expect(double.installed.map(entry => entry.ns))
+      .toEqual([socAuth.SOC_CREDENTIALS_NS, socAuth.SOC_TI_NS])
+    // and the second mount reads what the first registered
+    expect(socAuth.socEndpointSettings(ctx)).toEqual({ socDomain: 'soc.example.com' })
   })
 })
