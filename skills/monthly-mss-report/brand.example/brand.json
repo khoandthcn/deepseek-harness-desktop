@@ -1,0 +1,28 @@
+{
+  "provider_name": "EXAMPLE SECURITY",
+  "provider_legal": "Example Security",
+  "provider_short": "ES",
+  "service_header": "Managed Security Service",
+  "report_title": "MANAGED SECURITY SERVICE",
+  "accent": "#ee0033",
+  "ownership_notice": "Documents are owned by Example Security, all forms of unauthorized copying and sharing are strictly prohibited.",
+  "header_on_every_page": false,
+  "solutions": {
+    "siem": "SIEM",
+    "edr": "Endpoint Detection & Response (EDR)",
+    "nsm": "Network Security Monitoring (NSM)"
+  },
+  "footer": {
+    "company": "Example Security",
+    "address": "1 Example Street, Example City",
+    "phone": "+00 000 000 000",
+    "email": "sales@example.com",
+    "website": "www.example.com"
+  },
+  "images": {
+    "cover_background": "",
+    "cover_logo": "",
+    "header_logo": "",
+    "overview_background": ""
+  }
+}

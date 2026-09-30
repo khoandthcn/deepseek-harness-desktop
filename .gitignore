@@ -14,3 +14,7 @@ soc-endpoints.json
 
 # npm lockfiles from local package experiments: the patcher never copies them.
 overrides/soc/*/package-lock.json
+
+# The report skill's brand pack names the issuing company; it stays local.
+skills/*/brand/
+__pycache__/

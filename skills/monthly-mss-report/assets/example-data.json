@@ -1,0 +1,328 @@
+{
+  "meta": {
+    "customer_name": "Acme Corp",
+    "tenant": "acme",
+    "period": {
+      "year": 2024,
+      "month": 8
+    },
+    "utc_offset_hours": 7
+  },
+  "overview": {
+    "apt_count": 0,
+    "system_status": {
+      "label": "Secured System",
+      "level": "ok"
+    }
+  },
+  "incident_response": {
+    "incident_count": 0,
+    "incidents": []
+  },
+  "tier1": {
+    "alert_total": 1709,
+    "sla": {
+      "previous": 100,
+      "current": 100
+    },
+    "commentary": "August 2024 has witnessed an increase in the number of alerts compared with last month. The reason is that Acme Corp performed a backup on one server and ran agent scripts on several others. These were verified as expected administrative activity, and the alerts were tuned to reduce false positives.",
+    "by_solution": [
+      {
+        "name": "Endpoint Detection & Response (EDR)",
+        "count": 1095
+      },
+      {
+        "name": "SIEM",
+        "count": 550
+      },
+      {
+        "name": "Network Security Monitoring (NSM)",
+        "count": 64
+      }
+    ],
+    "by_category": [
+      {
+        "name": "Abnormal behaviour attack",
+        "count": 1633
+      },
+      {
+        "name": "Server monitor attack",
+        "count": 55
+      },
+      {
+        "name": "Malware attack",
+        "count": 21
+      }
+    ],
+    "by_level": [
+      {
+        "name": "Critical",
+        "count": 39
+      },
+      {
+        "name": "High",
+        "count": 210
+      },
+      {
+        "name": "Medium",
+        "count": 1460
+      }
+    ],
+    "top_rules": [
+      {
+        "rule_id": "Windows_Stop_Service_Via_PowerShell_Ver1",
+        "description": "Alerts of detecting the stop of a Windows service",
+        "count": 342
+      },
+      {
+        "rule_id": "Windows_Copy_From_Admin_Share_Via_PowerShell_Ver1",
+        "description": "Alerts of detecting a suspicious copy command to or from an Admin share",
+        "count": 297
+      },
+      {
+        "rule_id": "Anomaly_Detection_T1027_Obfuscated_Files_Or_Information",
+        "description": "Alerts of detecting technique T1027.002",
+        "count": 245
+      },
+      {
+        "rule_id": "Anomaly_Remote_System_Discovery_Command_Ver2",
+        "description": "Alerts of detecting remote system information using built-in commands",
+        "count": 213
+      },
+      {
+        "rule_id": "Anomaly_System_Service_Discovery_Through_Built_In_Utility_Ver3",
+        "description": "Alerts of detecting commonly used system service discovery techniques",
+        "count": 158
+      }
+    ],
+    "top_objects": [
+      {
+        "object": "10.10.0.11",
+        "count": 642
+      },
+      {
+        "object": "10.10.0.12",
+        "count": 247
+      },
+      {
+        "object": "10.10.0.13",
+        "count": 83
+      },
+      {
+        "object": "10.10.0.14",
+        "count": 79
+      },
+      {
+        "object": "10.10.0.15",
+        "count": 59
+      },
+      {
+        "object": "10.10.0.16",
+        "count": 56
+      },
+      {
+        "object": "10.10.0.17",
+        "count": 55
+      },
+      {
+        "object": "10.10.0.18",
+        "count": 49
+      },
+      {
+        "object": "10.10.0.19",
+        "count": 47
+      },
+      {
+        "object": "10.10.0.20",
+        "count": 30
+      }
+    ]
+  },
+  "tier2": {
+    "tickets_total": 80,
+    "tickets_on_time": 77,
+    "sla": {
+      "previous": 100
+    }
+  },
+  "tier3": {
+    "cases_total": 8,
+    "cases_excluded": 1,
+    "exclusion_reason": "because more time is needed to verify with Acme Corp",
+    "sla": {
+      "previous": 100,
+      "current": 100
+    }
+  },
+  "coverage": {
+    "nsm": {
+      "sensors_total": 1,
+      "sensors_ok": 1,
+      "detail": "sensor-01"
+    },
+    "siem": {
+      "installed": 55,
+      "online": 53,
+      "offline": 2
+    },
+    "edr": {
+      "installed": 34,
+      "online": 33,
+      "offline": 1
+    }
+  },
+  "content": {
+    "ticket_count": 0,
+    "sla": {
+      "previous": 100,
+      "current": 100
+    }
+  },
+  "optimization": [
+    {
+      "rule": "Windows_Stop_Service_Via_PowerShell_Ver1",
+      "optimization": "Whitelist command line of the scheduled backup job"
+    }
+  ],
+  "problems": [
+    {
+      "problem": "02 SIEM agents are not connected to the monitoring system (offline)",
+      "recommendation": "Acme Corp checks the servers that lost connection and reinstalls the agent on those still in use"
+    },
+    {
+      "problem": "01 EDR agent is not connected to the monitoring system (offline)",
+      "recommendation": "Acme Corp checks the server that lost connection and reinstalls the agent if it is still in use"
+    }
+  ],
+  "appendix_siem_offline": [
+    {
+      "hostname": "app-server-07",
+      "ip": "192.168.10.17",
+      "os": "ubuntu",
+      "last_ping": "22/08/2024 10:19",
+      "status": "Offline"
+    },
+    {
+      "hostname": "file-server-02",
+      "ip": "192.168.10.42",
+      "os": "Microsoft Windows Server 2016 Datacenter",
+      "last_ping": "06/08/2024 14:23",
+      "status": "Offline"
+    }
+  ],
+  "appendix_edr_offline": [
+    {
+      "hostname": "file-server-02",
+      "os": "windows",
+      "last_ping": "2024-08-12T12:23:15+07:00",
+      "ip": "192.168.10.42",
+      "status": "offline"
+    }
+  ],
+  "sources": {
+    "tier1.alert_total": {
+      "by": "tool",
+      "ref": "soar_search_alerts created_from=1722445200000 created_to=1725123599999 query='tenant = \"acme\"' size=1 -> count 1709"
+    },
+    "tier1.by_level": {
+      "by": "tool",
+      "ref": "soar_search_alerts, same bounds and tenant, one call per severity: critical 39, high 210, medium 1460"
+    },
+    "tier1.by_solution": {
+      "by": "tool",
+      "ref": "soar_search_alerts, same bounds and tenant, one call per value of the alert source field: EDR 1095, SIEM 550, NSM 64"
+    },
+    "tier1.by_category": {
+      "by": "tool",
+      "ref": "soar_search_alerts, same bounds and tenant, one call per alert category: 1633, 55, 21"
+    },
+    "tier1.top_rules": {
+      "by": "user",
+      "ref": "user supplied the month's top rules from the platform export; each confirmed by a count query"
+    },
+    "tier1.top_objects": {
+      "by": "user",
+      "ref": "user supplied the month's top objects from the platform export; each confirmed by a count query"
+    },
+    "tier2.tickets_total": {
+      "by": "tool",
+      "ref": "soar_search_tickets created in the period for tenant acme, size=1 -> count 80"
+    },
+    "tier2.tickets_on_time": {
+      "by": "user",
+      "ref": "user: '77 of 80 tickets were processed on time'"
+    },
+    "tier1.sla.previous": {
+      "by": "user",
+      "ref": "user: 'Tier 1 SLA July 100%'"
+    },
+    "tier1.sla.current": {
+      "by": "user",
+      "ref": "user: 'Tier 1 SLA August 100%'"
+    },
+    "tier2.sla.previous": {
+      "by": "user",
+      "ref": "user: 'Tier 2 SLA July 100%'"
+    },
+    "tier3.cases_total": {
+      "by": "user",
+      "ref": "user: '8 cases in August'"
+    },
+    "tier3.cases_excluded": {
+      "by": "user",
+      "ref": "user: '1 case deducted'"
+    },
+    "tier3.sla.previous": {
+      "by": "user",
+      "ref": "user: 'Tier 3 SLA July 100%'"
+    },
+    "tier3.sla.current": {
+      "by": "user",
+      "ref": "user: 'Tier 3 SLA August 100%'"
+    },
+    "content.ticket_count": {
+      "by": "user",
+      "ref": "user: 'no content ticket'"
+    },
+    "content.sla.previous": {
+      "by": "user",
+      "ref": "user: 'Content KPI July 100%'"
+    },
+    "content.sla.current": {
+      "by": "user",
+      "ref": "user: 'Content KPI August 100%'"
+    },
+    "overview.apt_count": {
+      "by": "user",
+      "ref": "user: 'no APT'"
+    },
+    "incident_response.incident_count": {
+      "by": "user",
+      "ref": "user: 'no incident'"
+    },
+    "optimization": {
+      "by": "user",
+      "ref": "user: 'one rule was whitelisted for the backup job'"
+    },
+    "coverage.nsm": {
+      "by": "tool",
+      "ref": "nsm_list_sensors, sensors of tenant acme: 1 of 1 healthy"
+    },
+    "coverage.siem": {
+      "by": "tool",
+      "ref": "siem_search_agents active=1 -> 53, active=0 -> 2, tenant acme rows only"
+    },
+    "coverage.edr": {
+      "by": "tool",
+      "ref": "edr_search_agents for tenant acme: total 34, online 33, offline 1"
+    },
+    "appendix_siem_offline": {
+      "by": "tool",
+      "ref": "siem_search_agents active=0, tenant acme rows, 1 page, 2 rows"
+    },
+    "appendix_edr_offline": {
+      "by": "tool",
+      "ref": "edr_search_agents offline for tenant acme, 1 row"
+    }
+  }
+}
