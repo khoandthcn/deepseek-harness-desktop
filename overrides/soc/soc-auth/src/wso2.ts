@@ -219,7 +219,8 @@ export async function establishAppSession(
       if (code !== undefined) return { code, cookies: jar.snapshot() }
       throw new SocAuthError(
         `SOC auth: the ${opts.clientId} authorize did not redirect to its callback `
-        + `(HTTP ${res.status}) and the page carried no code: ${describeBody(body)}`,
+        + `(HTTP ${res.status}) and the page carried no code: ${describeBody(body)}; `
+        + `cookies sent: [${Object.keys(jar.snapshot()).sort().join(', ')}]`,
       )
     }
     const location = res.headers.get('location')
@@ -309,8 +310,8 @@ function describeBody(body: string): string {
   const title = /<title[^>]*>([^<]{0,80})<\/title>/i.exec(body)?.[1]?.trim()
   const kind = body.includes(D1N_COOKIE)
     ? 'the WAF bootstrap page, whose cookie this build could not parse'
-    : /sessionDataKey|login\.do|name=["']password["']/i.test(body)
-      ? 'a login form, so the SSO session did not carry'
+    : /sessionDataKey|login\.do|authenticationendpoint|name=["']password["']|identity server/i.test(body)
+      ? 'the identity server\'s own login page, so the SSO session did not carry'
       : 'an unrecognized page'
   return `${kind}${title === undefined || title === '' ? '' : ` (title: ${title})`}; `
     + `first bytes: ${redactSecrets(body).slice(0, 200)}`

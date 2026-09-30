@@ -36,6 +36,14 @@ const SIEM_DEFAULT_TTL_MS = 300_000
  * with audience `cym_portal`. Only after that does the gatekeeper hand out
  * per-API codes; asking for an API audience first answers `invalid_request`.
  */
+/**
+ * The identity server's own session cookies, plus the WAF's. These are the
+ * names it may replace when it issues an app session, so they are the ones a
+ * later authorize has to carry in their newest form. Every other cookie
+ * belongs to the system that set it and stays there.
+ */
+const SSO_COOKIES = ['commonAuthId', 'opbs', 'JSESSIONID', 'samlssoTokenId', D1N_COOKIE]
+
 const SIEM_LOGIN_AUDIENCE = 'cym_api'
 const SIEM_LOGIN_SCOPE = 'login'
 const SIEM_PORTAL_AUDIENCE = 'cym_portal'
@@ -209,6 +217,34 @@ export class SocAuthService {
 
   /** The options this service was built with, re-read when endpoints change. */
   private readonly options: SocAuthServiceOptions
+
+  /**
+   * Carry forward whatever the identity server set during a flow that talked
+   * to it.
+   *
+   * It rotates its own session cookie each time it issues an app session, so a
+   * jar frozen at login goes stale the moment another system signs in: the
+   * next authorize arrives with a cookie the server has replaced and it
+   * answers with the login page instead of a redirect. That is why SOAR
+   * started failing only once SIEM was reached first.
+   *
+   * Only the identity server's own names are adopted. A system's own cookies
+   * stay with that system — the portal's `token` in particular, which the SOAR
+   * bearer refresh reads.
+   *
+   * @param generation - the session generation the flow started in.
+   * @param cookies - what that flow collected.
+   */
+  private adoptSsoCookies(generation: number, cookies: Record<string, string>): void {
+    // A flow that outlived its session must not repopulate the jar behind it.
+    if (generation !== this.generation) return
+    const adopted: Record<string, string> = {}
+    for (const name of SSO_COOKIES) {
+      const value = cookies[name]
+      if (value !== undefined && value !== this.cookies[name]) adopted[name] = value
+    }
+    if (Object.keys(adopted).length > 0) this.cookies = { ...this.cookies, ...adopted }
+  }
 
   /**
    * What the Threat Intelligence card's settings section carries. The plugin
@@ -492,6 +528,7 @@ export class SocAuthService {
     doFetch: FetchLike,
     params: { system: string, clientId: string, redirectUri: string, callbackUrl: string, scope?: string },
   ): Promise<{ sessionToken: string, idToken: string | undefined, cookies: Record<string, string> }> {
+    const generation = this.generation
     const { code, cookies } = await establishAppSession({
       iamUrl: this.iamUrl,
       clientId: params.clientId,
@@ -500,6 +537,7 @@ export class SocAuthService {
       cookies: this.cookies,
       fetchImpl: this.fetchImpl,
     })
+    this.adoptSsoCookies(generation, cookies)
     const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')
     let res: Response
     try {
@@ -732,6 +770,7 @@ export class SocAuthService {
           }
           throw error
         })
+        this.adoptSsoCookies(generation, cookies)
         const { jar } = await this.redeemSiemCode(doFetch, code, SIEM_PORTAL_AUDIENCE, cookies, 'login')
         this.assertCurrent(generation)
         this.siemJar = jar

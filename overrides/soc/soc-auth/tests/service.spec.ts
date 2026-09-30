@@ -580,6 +580,52 @@ describe('SocAuthService configured by one domain', () => {
   })
 })
 
+describe('SocAuthService and the identity server\'s rotating session', () => {
+  it('carries the session the identity server last set, not the one login saw', async () => {
+    // The server replaces its session cookie when it issues an app session.
+    // SIEM signs in first here, as it does in the app, and the SOAR authorize
+    // that follows must arrive with the replacement — with the stale one the
+    // server answers with its login page and SOAR never gets a code.
+    const cookieOf = (init: any): string => String(init?.headers?.cookie ?? '')
+    const f = vi.fn(async (url: string, init?: any) => {
+      const u = String(url)
+      if (u.startsWith(`${SIEM}/oauth/authorize`)) {
+        // signing SIEM in rotates the SSO cookie
+        return redirect(`${SIEM}/?code=LOGINCODE`, 'commonAuthId=rotated; Path=/')
+      }
+      if (u.startsWith(`${SIEM}/oauth/token`)) return json(200, { access_token: 'PORTAL', expires_in: 3600 })
+      if (u.startsWith(`${SOAR}/authen/callback`)) return json(200, { session_token: 'SESS-TOKEN' })
+      // the per-system authorize, told apart from login's own by its callback
+      if (u.startsWith(`${IAM}/oauth2/authorize`)
+        && u.includes(encodeURIComponent(`${SOAR}/callback`))) {
+        return cookieOf(init).includes('commonAuthId=rotated')
+          ? redirect(`${SOAR}/callback?code=APPCODE`)
+          : new Response('<html><head><title>Identity Server</title></head><body>sign in</body></html>', {
+            status: 200, headers: { 'content-type': 'text/html' },
+          })
+      }
+      if (u.includes('/access_control/access')) return json(200, { access_token: 'BEARER', expires_in: 3600 })
+      const res = wso2HappyPath()[iam++]
+      if (!res) throw new Error('unexpected extra WSO2 fetch call')
+      return res
+    })
+    let iam = 0
+    const svc = new SocAuthService({
+      iamUrl: IAM,
+      clientId: 'cid',
+      redirectUri: REDIRECT_URI,
+      soarBaseUrl: SOAR,
+      siemBaseUrl: SIEM,
+      credentials: async () => ({ username: 'alice', password: PASSWORD }),
+      fetchImpl: f as any,
+      now: () => 1_000_000,
+    })
+    await svc.login(OTP)
+    await svc.siemToken()
+    expect(await svc.soarBearer(SCOPE)).toBe('BEARER')
+  })
+})
+
 describe('SocAuthService session lifetime', () => {
   it('does not let an in-flight exchange revive a session that was invalidated', async () => {
     // The exchange is already running when the session is dropped; its write
