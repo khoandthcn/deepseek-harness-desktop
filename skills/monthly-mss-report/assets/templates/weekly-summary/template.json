@@ -1,0 +1,61 @@
+{
+  "title": "WEEKLY SECURITY MONITORING SUMMARY",
+  "cycle": "range",
+  "fields": {
+    "alerts.total":       { "type": "integer", "from": "tool", "hint": "soar_search_alerts over the period and tenant: the count field" },
+    "alerts.previous":    { "type": "integer", "from": "tool", "hint": "the same count over the previous period" },
+    "alerts.by_level":    { "type": "rows", "columns": ["name", "count"], "sum_equals": "alerts.total", "from": "tool", "hint": "soar_group_alerts field=severity" },
+    "alerts.by_solution": { "type": "rows", "columns": ["name", "count"], "sum_equals": "alerts.total", "from": "tool", "hint": "soar_group_alerts by the source-system field" },
+    "alerts.top_rules":   { "type": "rows", "columns": ["rule_id", "count"], "max_rows": 5, "sorted_desc": "count", "from": "tool", "hint": "soar_group_alerts field=rule_id top=5" },
+    "tickets.total":      { "type": "integer", "from": "tool", "hint": "soar_search_tickets over the period and tenant: the count field" },
+    "tickets.on_time":    { "type": "integer", "from": "user" },
+    "sla.previous":       { "type": "percent", "from": "user" },
+    "incidents":          { "type": "rows", "columns": ["title", "summary"], "from": "user", "hint": "incidents in the period; an empty list when there were none" },
+    "status.label":       { "type": "text", "from": "user", "confirm": false },
+    "commentary":         { "type": "text", "from": "user", "optional": true },
+    "actions":            { "type": "rows", "columns": ["problem", "recommendation"], "from": "user", "hint": "open problems and what is recommended; an empty list when there are none" }
+  },
+  "computed": {
+    "sla.current": { "percent_of": ["tickets.on_time", "tickets.total"] },
+    "kpis.met":    { "count_true": ["sla.current >= 90"] }
+  },
+  "blocks": [
+    { "type": "part", "text": "PART I. OVERVIEW", "background": "overview" },
+    { "type": "paragraph", "style": "lead", "text": "Security monitoring for {customer}, {period.label}, recorded:" },
+    { "type": "stats", "items": [
+      { "value": "{alerts.total}", "label": "Alerts" },
+      { "value": "{tickets.total}", "label": "Tickets" },
+      { "value": "{kpis.met}/1", "label": "Achieved KPIs per total KPIs" }
+    ] },
+    { "type": "banner", "text": "{status.label}", "level": "ok" },
+
+    { "type": "part", "text": "PART II. DETAIL" },
+    { "type": "section", "text": "Alerts" },
+    { "type": "bullet", "text": "Alerts recorded from {period.from} to {period.to}: {alerts.total} (previous period: {alerts.previous})." },
+    { "type": "paragraph", "style": "arrow", "text": "{commentary}", "when": "commentary" },
+    { "type": "bullet", "text": "Alerts by level:", "keep": true },
+    { "type": "bar_chart", "rows": "alerts.by_level" },
+    { "type": "bullet", "text": "Alerts by solution:", "keep": true },
+    { "type": "pie_chart", "rows": "alerts.by_solution" },
+    { "type": "bullet", "text": "Rules generating the most alerts:", "keep": true },
+    { "type": "table", "rows": "alerts.top_rules", "empty": "No alerts in this period.", "columns": [
+      { "head": "Rule ID", "field": "rule_id", "wrap": true },
+      { "head": "Alerts", "field": "count", "width": "18%", "align": "center" }
+    ] },
+
+    { "type": "section", "text": "Tickets" },
+    { "type": "bullet", "when": "sla.current >= 90", "text": "{tickets.on_time}/{tickets.total} tickets were processed on time, achieving the SLA target of 90%." },
+    { "type": "bullet", "unless": "sla.current >= 90", "text": "{tickets.on_time}/{tickets.total} tickets were processed on time, reaching {sla.current|pct}, below the SLA target of 90%." },
+    { "type": "kpi_chart", "previous": "sla.previous", "current": "sla.current", "target": 90, "legend": "Ticket KPI" },
+
+    { "type": "section", "text": "Incidents" },
+    { "type": "paragraph", "unless": "incidents", "text": "There was no incident on {customer}’s systems in this period." },
+    { "type": "bullets", "when": "incidents", "rows": "incidents", "text": "{title}: {summary}" },
+
+    { "type": "section", "text": "Problems and Recommendations" },
+    { "type": "table", "rows": "actions", "empty": "There is no open problem to report.", "columns": [
+      { "head": "Existing Problems", "field": "problem" },
+      { "head": "Recommendations", "field": "recommendation" }
+    ] }
+  ]
+}

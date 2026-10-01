@@ -173,5 +173,102 @@ class BrandTests(unittest.TestCase):
         self.assertIn('Tier 1 – Your Company', page)
 
 
+WEEKLY_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'templates' / 'weekly-summary'
+WEEKLY = json.loads((WEEKLY_DIR / 'template.json').read_text(encoding='utf8'))
+WEEKLY_DATA = json.loads((WEEKLY_DIR / 'example-data.json').read_text(encoding='utf8'))
+
+
+def weekly(mutate):
+    data = copy.deepcopy(WEEKLY_DATA)
+    mutate(data)
+    return br.check_template(data, WEEKLY)
+
+
+class TemplateTests(unittest.TestCase):
+    BRAND = {**br.DEFAULT_BRAND, '_images': {}}
+
+    def test_the_shipped_template_is_valid_and_its_example_is_finished(self):
+        self.assertEqual(br.validate_template(WEEKLY), [])
+        findings = br.check_template(WEEKLY_DATA, WEEKLY)
+        self.assertEqual((findings.errors, findings.needs_input), ([], []))
+
+    def test_a_template_is_found_by_name_in_the_working_directory_first(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            mine = Path(tmp) / 'report-templates' / 'weekly-summary'
+            mine.mkdir(parents=True)
+            (mine / 'template.json').write_text(json.dumps({**WEEKLY, 'title': 'MINE'}), encoding='utf8')
+            before = os.getcwd()
+            os.chdir(tmp)
+            try:
+                self.assertEqual(br.find_template('weekly-summary').resolve(), mine.resolve())
+                self.assertEqual(br.list_templates()[0][2], 'MINE')
+            finally:
+                os.chdir(before)
+
+    def test_the_skeleton_written_without_an_example_is_itself_valid(self):
+        self.assertEqual(br.validate_template(br.STARTER), [])
+
+    def test_a_block_reading_an_undeclared_figure_is_reported_to_the_author(self):
+        broken = copy.deepcopy(WEEKLY)
+        broken['blocks'].append({'type': 'bullet', 'text': 'Cases: {cases.total}'})
+        broken['blocks'].append({'type': 'table', 'rows': 'actions', 'columns': [{'head': 'Owner', 'field': 'owner'}]})
+        problems = br.validate_template(broken)
+        self.assertTrue(any('{cases.total} is not a field' in p for p in problems), problems)
+        self.assertTrue(any('no column "owner"' in p for p in problems), problems)
+
+    def test_a_declared_figure_with_no_value_is_asked_for_from_the_right_party(self):
+        findings = weekly(lambda d: (d['alerts'].update({'total': None}), d['tickets'].update({'on_time': None})))
+        self.assertEqual({path for path, _ in findings.needs_input}, {'alerts.total', 'tickets.on_time'})
+
+    def test_template_rows_must_add_up_and_carry_a_source(self):
+        findings = weekly(lambda d: d['alerts']['by_level'].pop())
+        self.assertTrue(any('alerts.by_level sums to 365 but alerts.total is 412' in e for e in findings.errors), findings.errors)
+        findings = weekly(lambda d: d['sources'].pop('tickets.on_time'))
+        self.assertTrue(any('sources["tickets.on_time"] is missing' in e for e in findings.errors))
+
+    def test_a_template_for_a_range_refuses_a_monthly_period(self):
+        findings = weekly(lambda d: d['meta'].update({'period': {'year': 2026, 'month': 9}}))
+        self.assertTrue(any('for a range period' in e for e in findings.errors), findings.errors)
+
+    def test_periods_of_each_cycle_and_the_equal_span_before(self):
+        week = br.period_of(WEEKLY_DATA)
+        self.assertEqual((week['label'], week['previous_label']),
+                         ('21/09/2026 – 27/09/2026', '14/09/2026 – 20/09/2026'))
+        quarter = br.period_of({'meta': {'period': {'year': 2026, 'quarter': 1}}})
+        self.assertEqual((quarter['label'], quarter['previous_label'], quarter['to']), ('Q1 2026', 'Q4 2025', '31/03/2026'))
+        self.assertEqual(br.period_bounds(WEEKLY_DATA)['this_period']['to_exclusive_iso'], '2026-09-28T00:00:00+07:00')
+
+    def test_computed_values_conditions_and_wording_follow_the_figures(self):
+        page = br.render(WEEKLY_DATA, self.BRAND, draft=False, template=WEEKLY)
+        self.assertIn('23/24 tickets were processed on time, achieving the SLA target', page)
+        self.assertIn('WEEKLY SECURITY MONITORING SUMMARY', page)
+        self.assertIn('There was no incident on Acme Corp', page)
+        data = copy.deepcopy(WEEKLY_DATA)
+        data['tickets']['on_time'] = 12
+        data['incidents'] = [{'title': 'Web shell', 'summary': '<b>contained</b>'}]
+        page = br.render(data, self.BRAND, draft=False, template=WEEKLY)
+        self.assertIn('reaching 50%, below the SLA target', page)
+        self.assertIn('<b>0/1</b>', page)
+        self.assertIn('Web shell: &lt;b&gt;contained&lt;/b&gt;', page)
+        self.assertNotIn('There was no incident', page)
+
+    def test_a_missing_figure_shows_as_na_in_a_template_draft(self):
+        data = copy.deepcopy(WEEKLY_DATA)
+        data['alerts']['total'] = None
+        data['alerts']['top_rules'] = None
+        page = br.render(data, self.BRAND, draft=True, template=WEEKLY)
+        self.assertIn('<b><span class="na">N/A</span></b>', page)
+        self.assertIn('N/A — not collected yet.', page)
+
+    def test_a_blank_data_file_lists_every_declared_figure(self):
+        data = br.blank_from_template(WEEKLY, 'weekly-summary', 'Acme', 'acme', {'from': '2026-09-21', 'to': '2026-09-27'}, 7)
+        self.assertIsNone(data['alerts']['by_level'])
+        self.assertEqual(data['commentary'], '')
+        needs = {path for path, _ in br.check_template(data, WEEKLY).needs_input}
+        self.assertEqual(needs, set(WEEKLY['fields']) - {'commentary'})
+
+
 if __name__ == '__main__':
     unittest.main()

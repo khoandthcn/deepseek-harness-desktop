@@ -1,7 +1,7 @@
 ---
 name: monthly-mss-report
-description: Produce the monthly Managed Security Service report for one customer tenant in the fixed A4 template (cover, overview, SLA charts for Tier 1/2/3 and Content, alert statistics, agent coverage, optimization, problems, offline-agent appendices), as HTML ready to print to PDF.
-whenToUse: The user asks for a monthly SOC / MSS / managed security service report, a "báo cáo tháng" for a customer or tenant, or to fill in the monthly report template.
+description: Produce the monthly Managed Security Service report for one customer tenant in the fixed A4 template (cover, overview, SLA charts for Tier 1/2/3 and Content, alert statistics, agent coverage, optimization, problems, offline-agent appendices), as HTML ready to print to PDF. Also produces weekly, quarterly or customer-specific reports from templates kept in the working directory, and turns a sample report the user provides into a new template.
+whenToUse: The user asks for a monthly SOC / MSS / managed security service report, a "báo cáo tháng" (or tuần / quý) for a customer or tenant, to fill in a report template, or to add, change or list report templates ("thêm template báo cáo").
 ---
 
 # Monthly Managed Security Service report
@@ -13,7 +13,8 @@ Everything lives beside this file; call it `$SKILL` (the directory the `skill` t
 
 - `scripts/build_report.py` — `init`, `period`, `check`, `render`
 - `references/data-collection.md` — which tool answers which figure, and how to record it
-- `references/data-contract.md` — the shape of `data.json`, field by field
+- `references/data-contract.md` — the shape of `data.json` for the built-in monthly report
+- `references/template-format.md` — how a template is written; read it before creating or editing one
 
 Speak to the user in their language. The report itself is in English, as the template is.
 
@@ -27,10 +28,28 @@ looks in `.dsh/report-brand` of the workspace, then in `report-brand` under the 
 (`~/.dsh`), and says which it used. With none, the report renders with placeholder names and no logo:
 tell the user, and point them at `brand.example` beside this file.
 
+## Which report
+
+Run `python3 "$SKILL/scripts/build_report.py" templates` first. It lists the built-in monthly report
+and every template in `report-templates/` of the working directory.
+
+- The user wants the standard monthly report and no template in the workspace is for that customer:
+  use the built-in one (no `--template`).
+- A template in the workspace matches the customer or the cycle the user asked for: use it, and say
+  which. If more than one could match, ask.
+- The user wants a layout none of them gives: make a template first (see "Adding a template").
+
+With a template the procedure below is the same, with three differences: `init` takes
+`--template <name>` and the period its cycle needs (`--year --month`, `--year --quarter`, or
+`--from --to`); the figures to collect are the template's `fields`, which `check` lists with the hint
+the template gives for each; and `references/data-collection.md` is a guide to which tool answers what,
+not a list to work down.
+
 ## Rules that are not negotiable
 
-1. **One tenant, one calendar month.** Every query carries the tenant and the exact period bounds
-   printed by `period`. A figure for another tenant, or for "the last 30 days", is a wrong figure.
+1. **One tenant, one period.** Every query carries the tenant and the exact period bounds printed by
+   `period` — a calendar month for the built-in report. A figure for another tenant, or for "the last
+   30 days", is a wrong figure.
 2. **A number is a count the platform returned, or an answer the user gave.** Never estimate, never
    extrapolate from a page of results, never reuse a figure from an earlier report or conversation.
    A page of 50 results tells you about 50 results; the total is the `count` field of the response.
@@ -102,3 +121,46 @@ tell the user, and point them at `brand.example` beside this file.
   draft. Do not substitute another system's data.
 - The user wants different wording in a standard sentence: those sentences come from the renderer so
   that they always agree with the figures. Change the figures or the narrative fields, not the HTML.
+
+## Adding a template
+
+The user can add a report layout in conversation: they give a sample (an HTML, PDF or DOCX of a past
+report, or a description), and you turn it into a template in **their working directory**. Never write
+into the skill directory; the application replaces it on every update.
+
+1. Read the sample. List for the user what you found: the sections in order, each chart and table,
+   the period it covers, and every figure it states. Ask what you cannot tell from one sample — which
+   sentences are fixed and which change, the SLA targets, whether a section can be absent.
+2. Start from the shipped example and read the format reference:
+
+   ```bash
+   python3 "$SKILL/scripts/build_report.py" new-template <customer>-<cycle>
+   ```
+
+   That writes `report-templates/<customer>-<cycle>/template.json` and an `example-data.json` beside it.
+3. Rewrite `template.json` for the sample: declare every figure under `fields` (its type, whether a
+   tool or the user supplies it, and a `hint` naming the tool and filter), then list the `blocks` in
+   reading order. Figures that follow from others go under `computed`, never under `fields`.
+4. Validate, and fix what it reports, until it prints OK:
+
+   ```bash
+   python3 "$SKILL/scripts/build_report.py" check-template <customer>-<cycle>
+   ```
+
+5. Rewrite `example-data.json` with the sample's own figures (mark each source `"by": "user"`,
+   `"ref": "sample report"`), render it, and show the user the result beside their sample:
+
+   ```bash
+   python3 "$SKILL/scripts/build_report.py" render report-templates/<name>/example-data.json \
+     --out report-templates/<name>/preview.html --pdf
+   ```
+
+6. Change the template as the user asks, re-render, repeat. The example data is for the preview only:
+   a real report starts from `init`, with every figure `null`.
+
+A template can only use the blocks the renderer has (headings, paragraphs, bullets, figures in a row,
+a status banner, KPI / pie / bar charts, tables, appendices). If the sample needs something else — a
+different page design, a chart type that is not there — say so plainly and offer the closest block;
+do not write HTML by hand to imitate it. The cover, the confidentiality page, the contents page, the
+page header and footer are the same for every template and take their names and logo from the brand
+pack; a template made for one customer may carry its own `brand.json` and images in its directory.

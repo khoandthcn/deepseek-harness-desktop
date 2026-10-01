@@ -1,0 +1,28 @@
+{
+  "meta": { "template": "weekly-summary", "customer_name": "Acme Corp", "tenant": "acme",
+            "period": { "from": "2026-09-21", "to": "2026-09-27" }, "utc_offset_hours": 7 },
+  "alerts": {
+    "total": 412, "previous": 377,
+    "by_level": [ { "name": "Critical", "count": 6 }, { "name": "High", "count": 58 }, { "name": "Medium", "count": 301 }, { "name": "Low", "count": 47 } ],
+    "by_solution": [ { "name": "EDR", "count": 260 }, { "name": "SIEM", "count": 131 }, { "name": "NSM", "count": 21 } ],
+    "top_rules": [ { "rule_id": "Suspicious_Service_Discovery", "count": 96 }, { "rule_id": "Scheduled_Task_Created", "count": 71 }, { "rule_id": "Outbound_Rare_Port", "count": 40 } ]
+  },
+  "tickets": { "total": 24, "on_time": 23 },
+  "sla": { "previous": 100 },
+  "incidents": [],
+  "status": { "label": "Secured System" },
+  "commentary": "Alert volume rose slightly against the previous week because of a scheduled backup job on two servers.",
+  "actions": [ { "problem": "03 agents are offline", "recommendation": "Check the servers and reinstall the agents where still in use." } ],
+  "sources": {
+    "alerts.total": { "by": "tool", "ref": "soar_search_alerts tenant=acme 21-27/09/2026: count" },
+    "alerts.previous": { "by": "tool", "ref": "soar_search_alerts tenant=acme 14-20/09/2026: count" },
+    "alerts.by_level": { "by": "tool", "ref": "soar_group_alerts field=severity" },
+    "alerts.by_solution": { "by": "tool", "ref": "soar_group_alerts field=source" },
+    "alerts.top_rules": { "by": "tool", "ref": "soar_group_alerts field=rule_id top=5" },
+    "tickets.total": { "by": "tool", "ref": "soar_search_tickets tenant=acme 21-27/09/2026: count" },
+    "tickets.on_time": { "by": "user", "ref": "user: 23 of 24 on time" },
+    "sla.previous": { "by": "user", "ref": "user: last week 100%" },
+    "incidents": { "by": "user", "ref": "user: no incident this week" },
+    "actions": { "by": "user", "ref": "user confirmed the list" }
+  }
+}

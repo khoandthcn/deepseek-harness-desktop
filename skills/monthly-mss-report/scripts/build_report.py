@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Check a monthly report's data and render it into the fixed A4 template.
 
-    build_report.py init   data.json --customer NAME --tenant ID --year Y --month M
+    build_report.py init   data.json --customer NAME --tenant ID --year Y --month M [--template NAME]
     build_report.py period data.json
     build_report.py check  data.json
     build_report.py render data.json --out report.html [--brand DIR] [--pdf] [--allow-draft]
+
+    build_report.py templates                      list the templates that can be named
+    build_report.py new-template NAME [--like T]   start one in ./report-templates/NAME
+    build_report.py check-template NAME            validate one before collecting data
+
+With no ``--template`` the report is the built-in monthly one. A template is a
+directory holding a ``template.json``, kept in ``report-templates/`` of the
+working directory; see ``references/template-format.md``.
 
 The division of labour is the point of this script. The agent collects figures
 into ``data.json`` and writes a handful of narrative sentences; everything
@@ -27,6 +35,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -487,8 +496,8 @@ def nice_step(maximum: float) -> float:
     return 10 * magnitude
 
 
-def level_chart(rows: list[dict] | None) -> str:
-    """One bar per alert level.
+def level_chart(rows: list[dict] | None, legend: str = 'Number of alerts') -> str:
+    """One bar per category, by default per alert level.
 
     :returns: an inline SVG.
     """
@@ -516,7 +525,7 @@ def level_chart(rows: list[dict] | None) -> str:
         parts.append(f'<text x="{center:.2f}" y="{by - 4:.2f}" font-size="10" text-anchor="middle">{row["count"]}</text>')
         parts.append(f'<text x="{center:.2f}" y="{bottom + 14:.2f}" font-size="10" text-anchor="middle">{esc(row["name"])}</text>')
     parts.append(f'<rect x="{right + 12}" y="84" width="5" height="5" fill="{RED}"/>'
-                 f'<text x="{right + 20}" y="89.5" font-size="10">Number of alerts</text></svg>')
+                 f'<text x="{right + 20}" y="89.5" font-size="10">{esc(legend)}</text></svg>')
     return ''.join(parts)
 
 
@@ -868,6 +877,8 @@ table.apxt td { padding: 0 6pt; }
 .cover { background-size: cover; }
 .cover .logo { position: absolute; left: 61.2pt; top: 82.9pt; width: 147.7pt; }
 .cover div { position: absolute; left: 61.5pt; line-height: 1; white-space: nowrap; }
+/* A long customer name wraps inside the page instead of running off its edge. */
+.cover div.who { width: 472pt; white-space: normal; line-height: 1.15; }
 .info h4 { margin: 40pt 0 28pt; text-align: center; font-size: 16pt; }
 .info p { text-indent: 36pt; line-height: 20.7pt; font-size: 12pt; }
 .info .copy { text-indent: 0; text-align: center; margin-top: 60pt; }
@@ -952,15 +963,34 @@ SCRIPT = """
 """
 
 
-def render(data: dict, brand: dict, *, draft: bool) -> str:
+#: The contents page of the built-in monthly report: ``(label, ref, number)``.
+MONTHLY_TOC = (
+    ('PART I. OVERVIEW', 'part1', ''), ('PART II. DETAIL INFORMATION', 'part2', ''),
+    ('Incident Response Service', 's1', '1.'), ('24/7 Security Monitoring Service', 's2', '2.'),
+    ('Content Security Service', 's3', '3.'), ('Alerts Optimization', 's4', '4.'),
+    ('Existing Problems and Recommendations', 's5', '5.'),
+)
+
+
+def render(data: dict, brand: dict, *, draft: bool, template: dict | None = None) -> str:
     """Build the whole document.
 
     :param data: report data.
     :param brand: the brand pack.
     :param draft: stamp every page as a draft (missing or unchecked data).
+    :param template: a loaded template, or ``None`` for the built-in monthly report.
     :returns: one self-contained HTML file.
     """
-    d = derive(data)
+    if template is None:
+        d = derive(data)
+        flow, contents = build_flow(data, d, brand), MONTHLY_TOC
+        period_line = f'(from {d["from"]} to {d["to"]})'
+    else:
+        document = template_document(data, template, brand)
+        d, flow, contents = document['d'], document['flow'], document['toc']
+        period_line = f'(from {d["from"]} to {d["to"]})'
+        if template.get('title'):
+            brand = {**brand, 'report_title': template['title']}
     images = brand['_images']
     customer = esc(get(data, 'meta.customer_name', None) or '<CUSTOMER NAME>')
     provider = esc(brand.get('provider_name', ''))
@@ -985,8 +1015,8 @@ def render(data: dict, brand: dict, *, draft: bool) -> str:
         + '<div style="top:252pt;font-size:20pt">REPORT</div>'
         f'<div style="top:285pt;font-size:22pt;font-weight:700;color:{accent}">{esc(brand.get("report_title", "MANAGED SECURITY SERVICE"))}</div>'
         f'<div style="top:318pt;font-size:16pt">{d["mm_yyyy"]}</div>'
-        f'<div style="top:345pt;font-size:16pt">(from {d["from"]} to {d["to"]})</div>'
-        f'<div style="top:471pt;font-size:24pt;font-weight:700;color:#404040">{customer}</div>'
+        f'<div style="top:345pt;font-size:16pt">{period_line}</div>'
+        f'<div class="who" style="top:471pt;font-size:24pt;font-weight:700;color:#404040">{customer}</div>'
         f'<div style="top:581pt;left:265.9pt;font-size:20pt;font-weight:700;color:{accent}">{provider}</div>'
         f'{stamp}</section>'
     )
@@ -1005,26 +1035,559 @@ def render(data: dict, brand: dict, *, draft: bool) -> str:
         number = f'<span>{sub}</span>' if sub else ''
         return (f'<div class="{"sub" if sub else ""}">{number}<span>{label}</span><i></i>'
                 f'<span data-toc-ref="{ref}">{"2" if ref == "info" else ""}</span></div>')
-    toc = fixed(3, 'toc', (
-        '<h4>CONTENT</h4>'
-        + entry('INFORMATION SECURITY', 'info') + entry('PART I. OVERVIEW', 'part1')
-        + entry('PART II. DETAIL INFORMATION', 'part2')
-        + entry('Incident Response Service', 's1', '1.') + entry('24/7 Security Monitoring Service', 's2', '2.')
-        + entry('Content Security Service', 's3', '3.') + entry('Alerts Optimization', 's4', '4.')
-        + entry('Existing Problems and Recommendations', 's5', '5.')))
+    toc = fixed(3, 'toc', '<h4>CONTENT</h4>' + entry('INFORMATION SECURITY', 'info')
+                + ''.join(entry(label, ref, number) for label, ref, number in contents))
 
     detail_header = header if brand.get('header_on_every_page') else ''
-    template = (f'<template id="page-tpl"><section class="page">{detail_header}<div class="content"></div>'
-                f'{foot}<div class="pageno"></div>{stamp}</section></template>')
+    page_template = (f'<template id="page-tpl"><section class="page">{detail_header}<div class="content"></div>'
+                     f'{foot}<div class="pageno"></div>{stamp}</section></template>')
     backgrounds = json.dumps({'overview': images.get('overview_background', '')})
-    title = f'{brand.get("report_title", "Managed Security Service")} — {get(data, "meta.customer_name", "")} — {d["mm_yyyy"]}'
+    title = f'{brand.get("report_title", "Managed Security Service")} — {get(data, "meta.customer_name", "")} — {d["mm_yyyy"] or d["month"]}'
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<title>{esc(title)}</title><style>{STYLE}</style></head><body>'
-        f'{cover}{info}{toc}{template}<div id="flow">{build_flow(data, d, brand)}</div>'
+        f'{cover}{info}{toc}{page_template}<div id="flow">{flow}</div>'
         f'<script>window.__bg = {backgrounds};</script><script>{SCRIPT}</script></body></html>'
     )
+
+
+# ── templates ────────────────────────────────────────────────────────────────
+#
+# The monthly report above is built in. Any other report — another customer's
+# layout, a weekly or quarterly cycle — is a *template*: a directory holding a
+# ``template.json`` that names the figures the report needs and lists its
+# blocks in reading order. Templates live with the user, in the directory they
+# are working in, so adding one never means changing this script.
+
+#: Directories, relative to the working directory, that hold templates.
+TEMPLATE_DIRS = ('report-templates', '.dsh/report-templates')
+
+FIELD_TYPES = ('integer', 'number', 'percent', 'text', 'rows')
+BLOCK_TYPES = ('part', 'section', 'subsection', 'paragraph', 'bullet', 'bullets', 'stats', 'banner',
+               'kpi_chart', 'pie_chart', 'bar_chart', 'table', 'appendix', 'page_break')
+#: Names every template may use in text without declaring them.
+BUILTINS = ('customer', 'tenant', 'provider', 'provider_short', 'period.label', 'period.previous',
+            'period.from', 'period.to', 'period.year')
+PLACEHOLDER = re.compile(r'\{([A-Za-z_][\w.]*)(?:\|(\w+))?\}')
+CONDITION = re.compile(r'^\s*([A-Za-z_][\w.]*)\s*(?:(>=|<=|==|!=|>|<)\s*(.+?))?\s*$')
+FILTERS = ('pad2', 'pct', 'upper')
+
+
+def template_roots() -> list[Path]:
+    """Where templates are looked for: the working directory first."""
+    home = Path(os.environ.get('DSH_HOME', '').strip() or Path.home() / '.dsh')
+    return [Path.cwd() / name for name in TEMPLATE_DIRS] + [home / 'report-templates',
+                                                            SKILL_DIR / 'assets' / 'templates']
+
+
+def find_template(name: str) -> Path | None:
+    """The directory of a template given by name or by path.
+
+    :param name: a template name, a template directory, or its ``template.json``.
+    :returns: the directory, or ``None`` when nothing matches.
+    """
+    direct = Path(name)
+    if direct.name == 'template.json' and direct.exists():
+        return direct.parent
+    if (direct / 'template.json').exists():
+        return direct
+    for root in template_roots():
+        if (root / name / 'template.json').exists():
+            return root / name
+    return None
+
+
+def list_templates() -> list[tuple[str, Path, str]]:
+    """Every template that can be named, nearest first: ``(name, directory, title)``."""
+    found, seen = [], set()
+    for root in template_roots():
+        if not root.is_dir():
+            continue
+        for directory in sorted(root.iterdir()):
+            if directory.name in seen or not (directory / 'template.json').exists():
+                continue
+            seen.add(directory.name)
+            try:
+                title = json.loads((directory / 'template.json').read_text(encoding='utf8')).get('title', '')
+            except (OSError, json.JSONDecodeError):
+                title = '(unreadable template.json)'
+            found.append((directory.name, directory, str(title)))
+    return found
+
+
+def placeholders(text) -> list[tuple[str, str | None]]:
+    """The ``{path|filter}`` references in a piece of template text."""
+    return [(m.group(1), m.group(2)) for m in PLACEHOLDER.finditer(str(text or ''))]
+
+
+def validate_template(template: dict) -> list[str]:
+    """What is wrong with a template, in words its author can act on.
+
+    Run before any data is collected: a block that reads a figure nobody
+    declared would otherwise surface as an N/A in a finished-looking report.
+
+    :returns: the problems; empty when the template is usable.
+    """
+    problems: list[str] = []
+    fields = template.get('fields')
+    blocks = template.get('blocks')
+    if not isinstance(fields, dict) or not fields:
+        problems.append('`fields` must be an object naming every figure the report needs')
+        fields = {}
+    if not isinstance(blocks, list) or not blocks:
+        problems.append('`blocks` must be a non-empty list')
+        blocks = []
+    if template.get('cycle', 'month') not in ('month', 'quarter', 'range'):
+        problems.append('`cycle` must be "month", "quarter" or "range" (any from–to span, e.g. a week)')
+    computed = template.get('computed') or {}
+    for path, spec in fields.items():
+        if not isinstance(spec, dict) or spec.get('type') not in FIELD_TYPES:
+            problems.append(f'fields["{path}"].type must be one of {", ".join(FIELD_TYPES)}')
+            continue
+        if spec.get('from', 'user') not in SOURCE_KINDS:
+            problems.append(f'fields["{path}"].from must be "tool" or "user"')
+        if spec['type'] == 'rows' and not (isinstance(spec.get('columns'), list) and spec['columns']):
+            problems.append(f'fields["{path}"] is rows, so it needs `columns`: the keys each row carries')
+        for key in ('sum_equals', 'rows_equal'):
+            if spec.get(key) and spec[key] not in fields:
+                problems.append(f'fields["{path}"].{key} names "{spec[key]}", which is not a field')
+    known = set(fields) | set(computed) | set(BUILTINS)
+
+    def columns_of(path) -> set[str]:
+        return set((fields.get(path) or {}).get('columns') or [])
+
+    def text_ok(where: str, text, row_columns: set[str] = frozenset()) -> None:
+        for path, flt in placeholders(text):
+            if path not in known and path not in row_columns:
+                problems.append(f'{where}: {{{path}}} is not a field, a computed value, a row column or a built-in name')
+            if flt and flt not in FILTERS:
+                problems.append(f'{where}: unknown filter "{flt}" (use {", ".join(FILTERS)})')
+
+    def path_ok(where: str, path, *, rows: bool = False) -> None:
+        if not isinstance(path, str) or path not in known:
+            problems.append(f'{where}: "{path}" is not a declared field')
+        elif rows and (fields.get(path) or {}).get('type') != 'rows':
+            problems.append(f'{where}: "{path}" must be a field of type rows')
+
+    for path, spec in computed.items():
+        if path in fields:
+            problems.append(f'computed["{path}"] is also a field: a figure is either supplied or computed')
+        if 'percent_of' in spec:
+            pair = spec['percent_of']
+            if not (isinstance(pair, list) and len(pair) == 2):
+                problems.append(f'computed["{path}"].percent_of must be [part, whole]')
+            else:
+                for item in pair:
+                    path_ok(f'computed["{path}"]', item)
+        elif 'count_true' in spec:
+            if not isinstance(spec['count_true'], list):
+                problems.append(f'computed["{path}"].count_true must be a list of conditions')
+        else:
+            problems.append(f'computed["{path}"] needs `percent_of` or `count_true`')
+
+    for index, block in enumerate(blocks):
+        where = f'blocks[{index}]'
+        if not isinstance(block, dict) or block.get('type') not in BLOCK_TYPES:
+            problems.append(f'{where}.type must be one of {", ".join(BLOCK_TYPES)}')
+            continue
+        kind = block['type']
+        where = f'{where} ({kind})'
+        row_columns = columns_of(block.get('rows')) if block.get('rows') else set()
+        if kind in ('bullets', 'pie_chart', 'bar_chart', 'table'):
+            path_ok(where, block.get('rows'), rows=True)
+        if kind in ('part', 'section', 'subsection', 'paragraph', 'bullet', 'bullets', 'banner'):
+            if not block.get('text'):
+                problems.append(f'{where} needs `text`')
+            text_ok(where, block.get('text'), row_columns)
+        if kind == 'appendix':
+            if not block.get('title'):
+                problems.append(f'{where} needs `title`')
+            text_ok(where, block.get('title'))
+        if kind == 'stats':
+            items = block.get('items')
+            if not (isinstance(items, list) and 1 <= len(items) <= 4):
+                problems.append(f'{where} needs 1 to 4 `items`, each {{"value": ..., "label": ...}}')
+            for item in items if isinstance(items, list) else []:
+                text_ok(where, item.get('value'))
+                text_ok(where, item.get('label'))
+        if kind == 'kpi_chart':
+            path_ok(where, block.get('previous'))
+            path_ok(where, block.get('current'))
+            if not is_number(block.get('target')):
+                problems.append(f'{where} needs a numeric `target`, in percent')
+        if kind in ('pie_chart', 'bar_chart'):
+            for key in (block.get('name', 'name'), block.get('count', 'count')):
+                if row_columns and key not in row_columns:
+                    problems.append(f'{where}: rows of "{block.get("rows")}" have no column "{key}"')
+        if kind == 'table':
+            columns = block.get('columns')
+            if not (isinstance(columns, list) and columns):
+                problems.append(f'{where} needs `columns`')
+            for column in columns if isinstance(columns, list) else []:
+                if not column.get('head'):
+                    problems.append(f'{where}: every column needs `head`')
+                if column.get('field'):
+                    if row_columns and column['field'] not in row_columns:
+                        problems.append(f'{where}: rows of "{block.get("rows")}" have no column "{column["field"]}"')
+                elif column.get('text'):
+                    text_ok(where, column['text'], row_columns)
+                else:
+                    problems.append(f'{where}: column "{column.get("head")}" needs `field` or `text`')
+            text_ok(where, block.get('empty'))
+        for key in ('when', 'unless'):
+            if block.get(key) is not None:
+                match = CONDITION.match(str(block[key]))
+                if not match:
+                    problems.append(f'{where}.{key}: cannot read "{block[key]}" (use `path`, or `path >= 90`)')
+                elif match.group(1) not in known:
+                    problems.append(f'{where}.{key}: "{match.group(1)}" is not a declared field')
+    return problems
+
+
+def load_template(name: str) -> tuple[dict, Path]:
+    """Find, read and validate a template; exit with the reasons if it is unusable."""
+    directory = find_template(name)
+    if directory is None:
+        looked = ', '.join(str(root) for root in template_roots()[:2])
+        sys.exit(f'build_report: no template "{name}". Templates are directories with a template.json, looked for in '
+                 f'{looked}. Run `build_report.py templates` to list them.')
+    try:
+        template = json.loads((directory / 'template.json').read_text(encoding='utf8'))
+    except (OSError, json.JSONDecodeError) as error:
+        sys.exit(f'build_report: cannot read {directory / "template.json"}: {error}')
+    problems = validate_template(template)
+    if problems:
+        sys.exit(f'build_report: {directory / "template.json"} is not usable:\n' + '\n'.join(f'  - {p}' for p in problems))
+    return template, directory
+
+
+def period_of(data: dict) -> dict:
+    """The span a report covers and the equal span before it, from ``meta.period``.
+
+    Three forms: ``{year, month}``, ``{year, quarter}``, or ``{from, to}`` with
+    ISO dates, ``to`` being the last day included.
+
+    :raises ValueError: when the period is none of these.
+    """
+    spec = get(data, 'meta.period', None) or {}
+    year, month, quarter = spec.get('year'), spec.get('month'), spec.get('quarter')
+    day = timedelta(days=1)
+    if isinstance(year, int) and isinstance(month, int) and 1 <= month <= 12:
+        start, end = month_bounds(year, month)
+        previous = month_bounds(*previous_month(year, month))[0]
+        # The monthly template prints the first day of the next month as the end.
+        return {'kind': 'month', 'start': start, 'end': end, 'previous_start': previous,
+                'label': month_label(year, month), 'previous_label': month_label(*previous_month(year, month)),
+                'cover': f'{month:02d}/{year}', 'from': f'{start:%d/%m/%Y}', 'to': f'{end:%d/%m/%Y}', 'year': year}
+    if isinstance(year, int) and isinstance(quarter, int) and 1 <= quarter <= 4:
+        start, end = date(year, quarter * 3 - 2, 1), month_bounds(year, quarter * 3)[1]
+        before = (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+        return {'kind': 'quarter', 'start': start, 'end': end, 'previous_start': date(before[0], before[1] * 3 - 2, 1),
+                'label': f'Q{quarter} {year}', 'previous_label': f'Q{before[1]} {before[0]}',
+                'cover': f'Q{quarter}/{year}', 'from': f'{start:%d/%m/%Y}', 'to': f'{end - day:%d/%m/%Y}', 'year': year}
+    try:
+        start, last = date.fromisoformat(str(spec.get('from'))), date.fromisoformat(str(spec.get('to')))
+    except ValueError:
+        raise ValueError('meta.period must be {year, month}, {year, quarter} or {from, to} as YYYY-MM-DD dates') from None
+    if last < start:
+        raise ValueError('meta.period.to is before meta.period.from')
+    end = last + day
+    previous = start - (end - start)
+    span = lambda a, b: f'{a:%d/%m/%Y} – {b:%d/%m/%Y}'  # noqa: E731
+    return {'kind': 'range', 'start': start, 'end': end, 'previous_start': previous,
+            'label': span(start, last), 'previous_label': span(previous, start - day),
+            'cover': '', 'from': f'{start:%d/%m/%Y}', 'to': f'{last:%d/%m/%Y}', 'year': start.year}
+
+
+class Values:
+    """What a template's text and conditions can name: data, computed values, built-ins."""
+
+    def __init__(self, data: dict, template: dict, brand: dict, period: dict) -> None:
+        self.data = data
+        self.computed = template.get('computed') or {}
+        provider = brand.get('provider_legal') or brand.get('provider_name', 'the provider')
+        self.builtins = {
+            'customer': get(data, 'meta.customer_name', None) or '<CUSTOMER NAME>',
+            'tenant': get(data, 'meta.tenant', None),
+            'provider': provider,
+            'provider_short': brand.get('provider_short') or provider,
+            'period.label': period['label'], 'period.previous': period['previous_label'],
+            'period.from': period['from'], 'period.to': period['to'], 'period.year': period['year'],
+        }
+
+    def value(self, path: str, row: dict | None = None):
+        """A named value, or ``None`` when it has not been supplied."""
+        if isinstance(row, dict):
+            found = get(row, path, MISSING)
+            if found is not MISSING:
+                return found
+        if path in self.builtins:
+            return self.builtins[path]
+        if path in self.computed:
+            return self.compute(self.computed[path])
+        return get(self.data, path, None)
+
+    def compute(self, spec: dict):
+        if 'percent_of' in spec:
+            part, whole = (self.value(path) for path in spec['percent_of'])
+            if not (is_number(part) and is_number(whole)):
+                return None
+            # Nothing to do means nothing was missed.
+            return float(spec.get('when_zero', 100)) if whole == 0 else round(part / whole * 100, 2)
+        return sum(1 for condition in spec.get('count_true', []) if self.holds(condition))
+
+    def holds(self, condition, row: dict | None = None) -> bool:
+        """Whether a ``when`` condition is true. An unknown value makes it false."""
+        match = CONDITION.match(str(condition))
+        if not match:
+            return False
+        left = self.value(match.group(1), row)
+        operator, right = match.group(2), match.group(3)
+        if operator is None:
+            return bool(left) and left != []
+        if left is None:
+            return False
+        try:
+            other = float(right)
+        except ValueError:
+            other = right.strip('"\'') if right[:1] in '"\'' else self.value(right, row)
+        if other is None:
+            return False
+        if is_number(left) != is_number(other):
+            left, other = str(left), str(other)
+        return {'>=': left >= other, '<=': left <= other, '>': left > other, '<': left < other,
+                '==': left == other, '!=': left != other}[operator]
+
+    def fill(self, text, row: dict | None = None) -> str:
+        """Template text as HTML: literals escaped, ``{path|filter}`` replaced."""
+        out, position, text = [], 0, str(text or '')
+        for match in PLACEHOLDER.finditer(text):
+            out.append(lines(text[position:match.start()]))
+            out.append(show(self.value(match.group(1), row), match.group(2)))
+            position = match.end()
+        out.append(lines(text[position:]))
+        return ''.join(out)
+
+
+def show(value, flt: str | None = None) -> str:
+    """A value as the report prints it; a missing one is a visible N/A."""
+    if value is None or value == '':
+        return '<span class="na">N/A</span>'
+    if flt == 'pct' and is_number(value):
+        return esc(pct(value))
+    if flt == 'pad2' and is_number(value):
+        return esc(pad2(value))
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = lines(value)
+    return text.upper() if flt == 'upper' else text
+
+
+def check_template(data: dict, template: dict) -> Findings:
+    """Validate a data file against a template's declared fields.
+
+    The same guarantees as the built-in check: every figure present, of its
+    type, consistent with the figures it is tied to, and with a recorded source.
+    """
+    f = Findings()
+    for path in ('meta.customer_name', 'meta.tenant'):
+        value = get(data, path, None)
+        if not isinstance(value, str) or not value.strip():
+            f.need(path, 'ask the user; a report is for exactly one tenant')
+    try:
+        period = period_of(data)
+    except ValueError as error:
+        f.error(str(error))
+        return f
+    wanted = template.get('cycle', 'month')
+    if period['kind'] != wanted:
+        f.error(f'this template is for a {wanted} period, but meta.period describes a {period["kind"]}')
+    fields = template['fields']
+    sources = data.get('sources') or {}
+    for path, spec in fields.items():
+        kind, value = spec['type'], get(data, path, None)
+        if value is None or (kind == 'text' and not str(value).strip()):
+            if not spec.get('optional'):
+                f.need(path, spec.get('hint') or 'no value yet')
+            continue
+        if kind == 'text':
+            if spec.get('confirm', True):
+                f.warn(f'{path} is free text: show it to the user and have them confirm it before the final render.')
+            continue
+        if kind in ('integer', 'number', 'percent'):
+            if not is_number(value) or (kind == 'integer' and int(value) != value):
+                f.error(f'{path} must be {"an integer" if kind == "integer" else "a number"}, got {value!r}')
+            elif value < 0 or (kind == 'percent' and value > 100):
+                f.error(f'{path} = {value} is outside 0..{"100" if kind == "percent" else "∞"}')
+        else:
+            check_rows(f, data, path, spec, value)
+        entry = sources.get(path)
+        if not isinstance(entry, dict) or entry.get('by') not in SOURCE_KINDS:
+            f.error(f'sources["{path}"] is missing: record {{"by": "tool"|"user", "ref": "..."}} for every '
+                    'figure, so nothing estimated or remembered reaches the report')
+        elif not str(entry.get('ref') or '').strip():
+            f.error(f'sources["{path}"].ref is empty: name the tool call and its filters, or what the user said')
+    return f
+
+
+def check_rows(f: Findings, data: dict, path: str, spec: dict, value) -> None:
+    """The checks on one ``rows`` field: shape, numbers, and its ties to other figures."""
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        f.error(f'{path} must be a list of objects')
+        return
+    numeric = spec.get('numeric') or (['count'] if 'count' in spec['columns'] else [])
+    loose = set(spec.get('optional_columns') or [])
+    for index, row in enumerate(value):
+        for column in spec['columns']:
+            if column in numeric:
+                if not (is_number(row.get(column)) and row[column] >= 0):
+                    f.error(f'{path}[{index}].{column} must be a non-negative number')
+                    return
+            elif column not in loose and row.get(column) in (None, ''):
+                f.error(f'{path}[{index}].{column} is empty')
+    if spec.get('max_rows') and len(value) > spec['max_rows']:
+        f.error(f'{path} has {len(value)} rows; the template lists at most {spec["max_rows"]}')
+    column = spec.get('sorted_desc')
+    if column:
+        order = [row.get(column) for row in value]
+        if order != sorted(order, reverse=True):
+            f.error(f'{path} must be ordered by {column}, largest first')
+    total_path = spec.get('sum_equals')
+    total = get(data, total_path, None) if total_path else None
+    if is_number(total):
+        column = spec.get('sum_column', 'count')
+        summed = sum(row.get(column) or 0 for row in value)
+        if summed != total:
+            f.error(f'{path} sums to {summed} but {total_path} is {total}: the rows must account for every one '
+                    '(find the missing bucket with a query, or re-run the counts over the same period and tenant)')
+    count_path = spec.get('rows_equal')
+    count = get(data, count_path, None) if count_path else None
+    if is_number(count) and len(value) != count:
+        f.error(f'{path} lists {len(value)} rows but {count_path} is {count}: it must list every one, no more and no fewer')
+
+
+def template_document(data: dict, template: dict, brand: dict) -> dict:
+    """Turn a template's blocks into the flow the page script lays out.
+
+    :returns: ``flow`` (HTML), ``toc`` entries as ``(label, ref, number)``, and
+        the ``d`` values the cover and the front pages print.
+    """
+    period = period_of(data)
+    values = Values(data, template, brand, period)
+    fill = values.fill
+    out: list[str] = []
+    toc: list[tuple[str, str, str]] = []
+    section = sub = 0
+
+    def keep(block: dict, default: bool = False) -> str:
+        return ' data-keep="1"' if block.get('keep', default) else ''
+
+    def rows_of(block: dict):
+        value = values.value(block['rows'])
+        return value if isinstance(value, list) else None
+
+    def build_table(block: dict, css: str = '') -> str:
+        rows = rows_of(block)
+        if not rows:
+            text = '<span class="na">N/A — not collected yet.</span>' if rows is None else fill(
+                block.get('empty') or 'None in this period.')
+            return f'<p class="blk ind">{text}</p>'
+        columns = block['columns']
+        numbered = block.get('numbered', True)
+        given = [column.get('width') for column in columns]
+        share = (100 - (7 if numbered else 0) - sum(float(w.rstrip('%')) for w in given if w)) / max(1, given.count(None))
+        widths = (['7%'] if numbered else []) + [w or f'{share:.2f}%' for w in given]
+        center = tuple(i + numbered for i, column in enumerate(columns) if column.get('align') == 'center')
+        body = []
+        for index, row in enumerate(rows, 1):
+            cells = []
+            for column in columns:
+                cell = show(row.get(column['field']), column.get('filter')) if column.get('field') else fill(column['text'], row)
+                cells.append(f'<span class="brk">{cell}</span>' if column.get('wrap') else cell)
+            body.append(([str(index)] if numbered else []) + cells)
+        head = ([block.get('number_head', 'No.')] if numbered else []) + [column['head'] for column in columns]
+        return table(head, body, widths, css=css or block.get('style', ''), center=((0,) if numbered else ()) + center)
+
+    for index, block in enumerate(template['blocks']):
+        if block.get('when') is not None and not values.holds(block['when']):
+            continue
+        if block.get('unless') is not None and values.holds(block['unless']):
+            continue
+        kind = block['type']
+        ref = f't{index}'
+        if kind == 'part':
+            section = sub = 0
+            background = f' data-bg="{esc(block["background"])}"' if block.get('background') else ''
+            out.append(f'<h1 class="blk" data-break="1" data-toc="{ref}"{background}>{fill(block["text"])}</h1>')
+            toc.append((fill(block['text']), ref, ''))
+        elif kind == 'section':
+            section, sub = section + 1, 0
+            out.append(f'<h2 class="blk" data-keep="1" data-toc="{ref}"><span>{section}.</span>{fill(block["text"])}</h2>')
+            toc.append((fill(block['text']), ref, f'{section}.'))
+        elif kind == 'subsection':
+            if block.get('number', True):
+                sub += 1
+                letter = chr(ord('a') + (sub - 1) % 26)
+                out.append(f'<h3 class="blk" data-keep="1"><span>{letter}.</span>{fill(block["text"])}</h3>')
+            else:
+                out.append(f'<h3 class="blk plain" data-keep="1">{fill(block["text"])}</h3>')
+        elif kind == 'paragraph':
+            style = block.get('style', 'ind')
+            css = {'lead': 'lead', 'note': 'note', 'arrow': 'arrow'}.get(style, 'ind')
+            lead = '<span>➔</span>' if css == 'arrow' else ''
+            out.append(f'<p class="blk {css}"{keep(block)}>{lead}{fill(block["text"])}</p>')
+        elif kind == 'bullet':
+            out.append(f'<p class="blk bullet"{keep(block)}><span>-</span>{fill(block["text"])}</p>')
+        elif kind == 'bullets':
+            rows = rows_of(block)
+            if rows is None:
+                out.append('<p class="blk bullet"><span>-</span><span class="na">N/A — not collected yet.</span></p>')
+            for row in rows or []:
+                out.append(f'<p class="blk bullet"><span>-</span>{fill(block["text"], row)}</p>')
+        elif kind == 'stats':
+            out.append('<div class="blk stats">' + ''.join(
+                f'<div><b>{fill(item.get("value"))}</b><span>{fill(item.get("label"))}</span></div>'
+                for item in block['items']) + '</div>')
+        elif kind == 'banner':
+            level = str(block.get('level', 'ok'))
+            level = str(values.value(level[1:-1]) or 'ok') if level.startswith('{') and level.endswith('}') else level
+            out.append(f'<div class="blk banner {esc(level)}">{fill(block["text"])}</div>')
+        elif kind == 'kpi_chart':
+            out.append('<div class="blk">' + kpi_chart(
+                values.value(block['previous']), values.value(block['current']), float(block['target']),
+                (period['previous_label'], period['label']), str(block.get('legend', 'KPI'))) + '</div>')
+        elif kind in ('pie_chart', 'bar_chart'):
+            rows = rows_of(block)
+            if rows is not None:
+                rows = [{'name': row.get(block.get('name', 'name')), 'count': row.get(block.get('count', 'count')) or 0}
+                        for row in rows]
+            chart = pie_chart(rows) if kind == 'pie_chart' else level_chart(rows, str(block.get('legend', 'Number of alerts')))
+            out.append(f'<div class="blk">{chart}</div>')
+        elif kind == 'table':
+            out.append(build_table(block))
+        elif kind == 'appendix':
+            title = ''.join(f'<b>{fill(line)}</b>' for line in str(block['title']).split('\n'))
+            out.append(f'<div class="blk apx" data-break="1" data-keep="1">{title}</div>')
+        elif kind == 'page_break':
+            out.append('<div class="blk" data-break="1"></div>')
+    return {'flow': '\n'.join(out), 'toc': toc,
+            'd': {'month': period['label'], 'mm_yyyy': period['cover'],
+                  'from': period['from'], 'to': period['to'], 'year': period['year']}}
+
+
+def blank_from_template(template: dict, name: str, customer: str, tenant: str, period: dict, utc_offset: float) -> dict:
+    """A data file for a template: identity filled in, every declared figure still ``null``."""
+    data: dict = {'meta': {'template': name, 'customer_name': customer, 'tenant': tenant,
+                           'period': period, 'utc_offset_hours': utc_offset}}
+    for path, spec in template['fields'].items():
+        node = data
+        *parents, leaf = path.split('.')
+        for key in parents:
+            node = node.setdefault(key, {})
+        node[leaf] = '' if spec['type'] == 'text' else None
+    data['sources'] = {}
+    return data
 
 
 # ── command line ─────────────────────────────────────────────────────────────
@@ -1101,24 +1664,28 @@ def period_bounds(data: dict) -> dict:
     :returns: the half-open period in epoch milliseconds and ISO form, for
         this month and for the month before it.
     """
-    year, month = data['meta']['period']['year'], data['meta']['period']['month']
+    period = period_of(data)
     zone = timezone(timedelta(hours=float(get(data, 'meta.utc_offset_hours', 7))))
 
-    def bounds(y: int, m: int) -> dict:
-        start, end = month_bounds(y, m)
+    def bounds(label: str, start: date, end: date) -> dict:
         first = datetime(start.year, start.month, start.day, tzinfo=zone)
         last = datetime(end.year, end.month, end.day, tzinfo=zone)
-        return {'label': month_label(y, m),
+        return {'label': label,
                 'from_ms': int(first.timestamp() * 1000), 'to_ms': int(last.timestamp() * 1000) - 1,
                 'from_iso': first.isoformat(), 'to_exclusive_iso': last.isoformat()}
-    return {'tenant': get(data, 'meta.tenant', None), 'this_month': bounds(year, month),
-            'previous_month': bounds(*previous_month(year, month))}
+    unit = 'month' if period['kind'] == 'month' else 'period'
+    return {'tenant': get(data, 'meta.tenant', None),
+            f'this_{unit}': bounds(period['label'], period['start'], period['end']),
+            f'previous_{unit}': bounds(period['previous_label'], period['previous_start'], period['start'])}
 
 
-def report(findings: Findings) -> None:
-    """Print what ``check`` found, most blocking first."""
-    from_tools = [(path, why) for path, why in findings.needs_input if path in FROM_TOOLS]
-    from_user = [(path, why) for path, why in findings.needs_input if path not in FROM_TOOLS]
+def report(findings: Findings, tools: tuple[str, ...] = FROM_TOOLS) -> None:
+    """Print what ``check`` found, most blocking first.
+
+    :param tools: the figures a tool can answer; the rest are asked of the user.
+    """
+    from_tools = [(path, why) for path, why in findings.needs_input if path in tools]
+    from_user = [(path, why) for path, why in findings.needs_input if path not in tools]
     if from_tools:
         print(f'COLLECT WITH TOOLS ({len(from_tools)}) — query the platform for the report tenant and period:')
         for path, why in from_tools:
@@ -1139,48 +1706,145 @@ def report(findings: Findings) -> None:
         print('OK: the figures are consistent and every one has a recorded source.')
 
 
-def write_sources(data: dict, d: dict, path: Path) -> None:
+def write_sources(data: dict, label: str, path: Path) -> None:
     """Write the audit sheet: where each figure in the report came from."""
-    rows = ['# Data sources', '', f'Report: {get(data, "meta.customer_name", "")} — {d["month"]} '
+    rows = ['# Data sources', '', f'Report: {get(data, "meta.customer_name", "")} — {label} '
             f'(tenant `{get(data, "meta.tenant", "")}`), generated {datetime.now():%Y-%m-%d %H:%M}.', '',
             '| Figure | Supplied by | Reference |', '|---|---|---|']
     for key, entry in sorted((data.get('sources') or {}).items()):
         rows.append(f'| `{key}` | {entry.get("by", "")} | {str(entry.get("ref", "")).replace("|", "/")} |')
-    rows += ['', 'Computed by the renderer: KPIs achieved, Tier 2 SLA from ticket counts, period labels.']
+    rows += ['', 'Computed by the renderer: percentages from counts, KPIs achieved, period labels.']
     path.write_text('\n'.join(rows) + '\n', encoding='utf8')
 
 
+#: The smallest useful template, written when there is no example to copy.
+STARTER = {
+    'title': 'SECURITY MONITORING REPORT',
+    'cycle': 'month',
+    'fields': {
+        'alerts.total': {'type': 'integer', 'from': 'tool', 'hint': 'soar_search_alerts over the period and tenant: the count field'},
+        'alerts.by_level': {'type': 'rows', 'columns': ['name', 'count'], 'sum_equals': 'alerts.total', 'from': 'tool',
+                            'hint': 'soar_group_alerts field=severity'},
+        'commentary': {'type': 'text', 'from': 'user', 'optional': True},
+    },
+    'computed': {},
+    'blocks': [
+        {'type': 'part', 'text': 'PART I. OVERVIEW', 'background': 'overview'},
+        {'type': 'paragraph', 'style': 'lead', 'text': 'Security monitoring for {customer} in {period.label} recorded:'},
+        {'type': 'stats', 'items': [{'value': '{alerts.total}', 'label': 'Alerts'}]},
+        {'type': 'part', 'text': 'PART II. DETAIL'},
+        {'type': 'section', 'text': 'Alerts'},
+        {'type': 'bullet', 'text': 'Alerts by level:', 'keep': True},
+        {'type': 'bar_chart', 'rows': 'alerts.by_level'},
+        {'type': 'paragraph', 'style': 'arrow', 'text': '{commentary}', 'when': 'commentary'},
+    ],
+}
+
+
+def new_template(name: str, like: str) -> int:
+    """Start a template in the working directory from an existing one."""
+    source = find_template(like)
+    target = Path(name) if len(Path(name).parts) > 1 else Path.cwd() / TEMPLATE_DIRS[0] / name
+    if target.exists():
+        print(f'build_report: {target} already exists; not overwritten.', file=sys.stderr)
+        return 2
+    if source is None:
+        # A copy of this script run from a workspace has no shipped examples
+        # beside it; a bare skeleton is still a valid place to start.
+        target.mkdir(parents=True)
+        (target / 'template.json').write_text(json.dumps(STARTER, indent=2, ensure_ascii=False) + '\n', encoding='utf8')
+        print(f'wrote: {target / "template.json"} (a bare skeleton: no template "{like}" was found to copy)\n'
+              'Edit its fields and blocks, then run `check-template` on it.')
+        return 0
+    shutil.copytree(source, target)
+    example = target / 'example-data.json'
+    if example.exists():
+        # The preview data travels with the copy and must name it, not its origin.
+        sample = json.loads(example.read_text(encoding='utf8'))
+        sample.setdefault('meta', {})['template'] = target.name
+        example.write_text(json.dumps(sample, indent=2, ensure_ascii=False) + '\n', encoding='utf8')
+    print(f'wrote: {target / "template.json"} (a copy of "{like}")\n'
+          'Edit its fields and blocks, then run `check-template` on it.')
+    return 0
+
+
 def main() -> int:
-    """Run ``check`` or ``render``.
+    """Run one command.
 
     :returns: 0 when clean, 2 when the data blocks a final report.
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=('init', 'period', 'check', 'render'))
-    parser.add_argument('data', type=Path)
+    parser.add_argument('command', choices=('init', 'period', 'check', 'render',
+                                            'templates', 'new-template', 'check-template'))
+    parser.add_argument('data', type=Path, nargs='?',
+                        help='the data file; for new-template and check-template, the template name or directory')
     parser.add_argument('--customer', help='customer name as it should appear in the report (init)')
     parser.add_argument('--tenant', help='the tenant id every query is scoped to (init)')
+    parser.add_argument('--template', help='a template name or directory (init); omit for the built-in monthly report')
+    parser.add_argument('--like', default='weekly-summary', help='the template a new one starts as a copy of (new-template)')
     parser.add_argument('--year', type=int, help='report year (init)')
     parser.add_argument('--month', type=int, help='report month, 1-12 (init)')
+    parser.add_argument('--quarter', type=int, help='report quarter, 1-4 (init, quarterly templates)')
+    parser.add_argument('--from', dest='start', help='first day, YYYY-MM-DD (init, templates over a date range)')
+    parser.add_argument('--to', dest='last', help='last day included, YYYY-MM-DD (init, templates over a date range)')
     parser.add_argument('--utc-offset', type=float, default=7.0,
-                        help='hours east of UTC that the month boundaries are taken in (init, default 7)')
+                        help='hours east of UTC that the period boundaries are taken in (init, default 7)')
     parser.add_argument('--out', type=Path, help='the HTML file to write (render)')
     parser.add_argument('--brand', type=Path,
-                        help='brand pack directory (default: .dsh/report-brand in the workspace, then ~/.dsh/report-brand)')
+                        help='brand pack directory (default: the template\'s own, then .dsh/report-brand in the '
+                             'workspace, then ~/.dsh/report-brand)')
     parser.add_argument('--pdf', action='store_true', help='also print a PDF with a local Chromium-family browser')
     parser.add_argument('--allow-draft', action='store_true',
                         help='render even with missing or inconsistent data, stamped DRAFT on every page')
     args = parser.parse_args()
 
+    if args.command == 'templates':
+        print('monthly-mss  (built in)  MANAGED SECURITY SERVICE — monthly; used when init is given no --template')
+        for name, directory, title in list_templates():
+            print(f'{name}  ({directory})  {title}')
+        print(f'\nA new template is a directory with a template.json under ./{TEMPLATE_DIRS[0]}/ of the working directory.')
+        return 0
+    if args.data is None:
+        parser.error(f'{args.command} needs a path')
+    if args.command == 'new-template':
+        return new_template(str(args.data), args.like)
+    if args.command == 'check-template':
+        template, directory = load_template(str(args.data))
+        tools = sum(1 for spec in template['fields'].values() if spec.get('from') == 'tool')
+        print(f'OK: {directory / "template.json"} — {len(template["blocks"])} blocks, {len(template["fields"])} fields '
+              f'({tools} from tools, {len(template["fields"]) - tools} from the user), cycle {template.get("cycle", "month")}.')
+        return 0
+
     if args.command == 'init':
-        if not (args.customer and args.tenant and args.year and args.month and 1 <= args.month <= 12):
-            parser.error('init needs --customer, --tenant, --year and --month (1-12)')
+        if not (args.customer and args.tenant):
+            parser.error('init needs --customer and --tenant')
         if args.data.exists():
             print(f'build_report: {args.data} already exists; not overwritten.', file=sys.stderr)
             return 2
+        if args.template:
+            template, directory = load_template(args.template)
+            if args.start and args.last:
+                period = {'from': args.start, 'to': args.last}
+            elif args.year and args.quarter:
+                period = {'year': args.year, 'quarter': args.quarter}
+            else:
+                period = {'year': args.year, 'month': args.month}
+            try:
+                kind = period_of({'meta': {'period': period}})['kind']
+            except ValueError as error:
+                parser.error(f'init: {error}. Give --year --month, --year --quarter, or --from --to.')
+            if kind != template.get('cycle', 'month'):
+                parser.error(f'template "{directory.name}" is for a {template.get("cycle", "month")} period; '
+                             f'the options given describe a {kind}')
+            # Recorded as a path when the template is not in a place it would be found by name.
+            named = directory.name if find_template(directory.name) == directory else str(directory)
+            blank_data = blank_from_template(template, named, args.customer, args.tenant, period, args.utc_offset)
+        else:
+            if not (args.year and args.month and 1 <= args.month <= 12):
+                parser.error('init needs --year and --month (1-12), or --template for another kind of report')
+            blank_data = blank(args.customer, args.tenant, args.year, args.month, args.utc_offset)
         args.data.parent.mkdir(parents=True, exist_ok=True)
-        args.data.write_text(json.dumps(blank(args.customer, args.tenant, args.year, args.month, args.utc_offset),
-                                        indent=2, ensure_ascii=False) + '\n', encoding='utf8')
+        args.data.write_text(json.dumps(blank_data, indent=2, ensure_ascii=False) + '\n', encoding='utf8')
         print(f'wrote: {args.data}')
         return 0
     try:
@@ -1189,10 +1853,20 @@ def main() -> int:
         print(f'build_report: cannot read {args.data}: {error}', file=sys.stderr)
         return 2
     if args.command == 'period':
-        print(json.dumps(period_bounds(data), indent=2))
+        try:
+            print(json.dumps(period_bounds(data), indent=2))
+        except ValueError as error:
+            print(f'build_report: {error}', file=sys.stderr)
+            return 2
         return 0
-    findings = check(data)
-    report(findings)
+    template, template_dir = None, None
+    if get(data, 'meta.template', None):
+        template, template_dir = load_template(str(data['meta']['template']))
+        findings = check_template(data, template)
+        report(findings, tuple(path for path, spec in template['fields'].items() if spec.get('from') == 'tool'))
+    else:
+        findings = check(data)
+        report(findings)
     if args.command == 'check':
         return 2 if findings.blocking else 0
     if findings.blocking and not args.allow_draft:
@@ -1200,10 +1874,19 @@ def main() -> int:
         return 2
     if args.out is None:
         parser.error('render needs --out')
-    brand, brand_dir = find_brand(args.brand)
+    try:
+        label = period_of(data)['label']
+    except ValueError as error:
+        print(f'build_report: {error}', file=sys.stderr)
+        return 2
+    # A template made for one customer may carry that customer's own brand pack.
+    own_brand = template_dir if template_dir is not None and (template_dir / 'brand.json').exists() else None
+    brand, brand_dir = find_brand(args.brand or own_brand)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render(data, brand, draft=findings.blocking), encoding='utf8')
+    args.out.write_text(render(data, brand, draft=findings.blocking, template=template), encoding='utf8')
     print(f'\nwrote: {args.out}{" (DRAFT)" if findings.blocking else ""}')
+    if template_dir is not None:
+        print(f'template: {template_dir}')
     if brand_dir is None:
         print('brand: none found, so the report carries placeholder names and no logo. Put a brand pack '
               f'(brand.json and its images) in {Path.home() / ".dsh" / "report-brand"} or in '
@@ -1211,7 +1894,7 @@ def main() -> int:
     else:
         print(f'brand: {brand_dir}')
     sources = args.out.with_suffix('.sources.md')
-    write_sources(data, derive(data), sources)
+    write_sources(data, label, sources)
     print(f'wrote: {sources}')
     if args.pdf:
         pdf = print_pdf(args.out)
