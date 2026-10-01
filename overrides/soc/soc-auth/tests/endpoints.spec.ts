@@ -101,6 +101,15 @@ describe('resolveEndpoints', () => {
     expect(message).toContain('SOC_DOMAIN')
     expect(message).toContain('Settings')
   })
+
+  it('points out a domain typed into the client-id field, without repeating it', () => {
+    const home = homeWith(undefined)
+    const message = missingEndpointsMessage(resolveEndpoints({ env: {}, home, settings: { clientId: 'platform.corp.test' } }))
+    expect(message).toMatch(/client id currently holds what looks like a domain name/)
+    expect(message).not.toContain('platform.corp.test')
+    const fine = missingEndpointsMessage(resolveEndpoints({ env: {}, home, settings: { clientId: 'APP_MASTER' } }))
+    expect(fine).not.toMatch(/looks like a domain/)
+  })
 })
 
 describe('dshHome', () => {

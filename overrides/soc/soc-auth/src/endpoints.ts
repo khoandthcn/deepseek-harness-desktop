@@ -179,4 +179,18 @@ export function missingEndpointsMessage(resolved: ResolvedEndpoints): string {
     + 'system, e.g. "soc.example.com" — '
     + `or write it into ${resolved.filePath} (a JSON object), `
     + `or set ${envNames.join(', ')} in the environment.`
+    + misplacedDomainHint(resolved)
+}
+
+/**
+ * A domain typed into the client-id field is the mistake that leaves the
+ * domain unset while the card looks filled in: the two fields sit together
+ * and a client id is an identifier (letters, digits, underscores), never a
+ * host name. Said without repeating the value.
+ */
+function misplacedDomainHint(resolved: ResolvedEndpoints): string {
+  const clientId = resolved.values.clientId ?? ''
+  if (!resolved.missing.includes('socDomain') || !/^[\w-]+(\.[\w-]+)+$/.test(clientId)) return ''
+  return ' The sign-in client id currently holds what looks like a domain name: the domain belongs in '
+    + '"Platform domain", and the client id is the identifier the platform issued for this application.'
 }

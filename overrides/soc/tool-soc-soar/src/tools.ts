@@ -21,6 +21,7 @@ import type {
   SearchCasesOptions,
   SearchTicketsOptions,
 } from './adapter.ts'
+import { diagnoseNetworkFailure } from '@deepseek-ai/dsh-soc-client'
 
 /** The adapter surface the tools drive; `SoarAdapter` satisfies it structurally. */
 export interface SoarAdapterLike {
@@ -77,6 +78,33 @@ export interface SoarToolDef {
 export interface CreateSoarToolDefsOptions {
   adapter: SoarAdapterLike
   auth: SocAuthLike
+  /**
+   * The base URL of each SOC system, by name, as currently configured. Read
+   * per call, because the user can change the platform domain in Settings.
+   */
+  endpoints?: (() => Record<string, string>) | undefined
+  /** Injectable fetch for the reachability check (defaults to the global `fetch`). */
+  probeFetch?: typeof fetch | undefined
+  /** Injectable environment for the reachability check (defaults to `process.env`). */
+  env?: Record<string, string | undefined> | undefined
+}
+
+/** How long one reachability probe may take before it is reported as a timeout. */
+export const PROBE_TIMEOUT_MS = 10_000
+
+/**
+ * A proxy URL fit to show: a proxy that needs a login carries it in the URL,
+ * and that part is never displayed.
+ */
+function withoutCredentials(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return '(set, but not a URL)'
+  }
 }
 
 /**
@@ -122,7 +150,7 @@ const JSON_OUTPUT = {
  * @param options - the SOAR adapter and the SOC auth service to drive.
  * @returns plain definitions, ready for `defineTool`.
  */
-export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions): SoarToolDef[] {
+export function createSoarToolDefs({ adapter, auth, endpoints, probeFetch, env }: CreateSoarToolDefsOptions): SoarToolDef[] {
   /**
    * Wrap a read tool so it fails closed: with no SOC session it returns the
    * structured not-authenticated value and never touches the adapter.
@@ -163,6 +191,70 @@ export function createSoarToolDefs({ adapter, auth }: CreateSoarToolDefsOptions)
         await auth.login(String(args.otp))
         // Deliberately returns no echo of the OTP.
         return { status: 'logged_in' }
+      },
+    },
+    {
+      name: 'soc_check_network',
+      description:
+        'Check whether this machine can reach each SOC system (the sign-in server, SOAR, EDR, SIEM, NSM)'
+        + ' and say why not: a name that does not resolve, a proxy that is missing or refuses, a TLS'
+        + ' certificate the machine does not trust. Call it when soc_login or any SOC or Threat'
+        + ' Intelligence tool reports a network error, BEFORE advising the user: the result names the'
+        + ' cause and the setting to change. It needs no login and sends one request without credentials'
+        + ' to each system. Pass `extra_urls` to check other hosts the same way, e.g. the Threat'
+        + ' Intelligence API. Do not diagnose with shell commands instead: a shell\'s `node` or `curl`'
+        + ' does not use this application\'s proxy and trust settings, so its answer differs.',
+      parameters: {
+        extra_urls: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Other https URLs to check the same way, e.g. "https://api.example.com".',
+        },
+      },
+      output: JSON_OUTPUT,
+      execute: async (args) => {
+        const environment = env ?? process.env
+        const doFetch = probeFetch ?? ((input, init) => fetch(input, init))
+        const targets: { system: string, url: string }[] = Object.entries(endpoints?.() ?? {})
+          .filter(([, url]) => url !== '')
+          .map(([system, url]) => ({ system, url }))
+        for (const extra of Array.isArray(args.extra_urls) ? args.extra_urls : []) {
+          if (typeof extra === 'string' && /^https?:\/\//i.test(extra)) targets.push({ system: 'extra', url: extra })
+        }
+        const results = await Promise.all(targets.map(async ({ system, url }) => {
+          let origin: string
+          try {
+            origin = new URL(url).origin
+          } catch {
+            return { system, host: url, reachable: false, kind: 'unknown', code: '', detail: 'not a valid URL' }
+          }
+          const host = new URL(origin).host
+          try {
+            // Any answer at all proves the path: name, route, proxy and TLS.
+            // The status is reported but not judged — a sign-in page answers
+            // 302 or 403 to a request that carries nothing.
+            const res = await doFetch(`${origin}/`, { redirect: 'manual', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+            await res.body?.cancel().catch(() => {})
+            return { system, host, reachable: true, status: res.status }
+          } catch (error) {
+            const failure = diagnoseNetworkFailure(error, environment)
+            return { system, host, reachable: false, kind: failure.kind, code: failure.code, detail: failure.message }
+          }
+        }))
+        const proxy = ['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY']
+          .map(name => (environment[name] ?? '').trim()).find(value => value !== '')
+        const bypass = (environment.no_proxy ?? environment.NO_PROXY ?? '').trim()
+        const failed = results.filter(result => !result.reachable)
+        return {
+          proxy: proxy === undefined ? 'none' : withoutCredentials(proxy),
+          no_proxy: bypass === '' ? 'none' : bypass,
+          reachable: results.length - failed.length,
+          unreachable: failed.length,
+          results,
+          ...(results.length === 0
+            ? { note: 'No SOC system is configured yet: the platform domain is set under Settings → Plugins → SOC Cloud.' }
+            : {}),
+        }
       },
     },
     {

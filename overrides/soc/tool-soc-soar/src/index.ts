@@ -79,7 +79,15 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const adapter = new SoarAdapter(soarHttp, tenant)
 
-  for (const def of createSoarToolDefs({ adapter, auth })) {
+  // Read per call: the platform domain can change in Settings while this runs.
+  const endpoints = (): Record<string, string> => ({
+    'sign-in': auth.iamUrl,
+    soar: soarBaseUrl(),
+    edr: auth.edrBaseUrl,
+    siem: auth.siemBaseUrl,
+    nsm: auth.nsmBaseUrl,
+  })
+  for (const def of createSoarToolDefs({ adapter, auth, endpoints })) {
     ctx.tools.register(define(def))
   }
 }

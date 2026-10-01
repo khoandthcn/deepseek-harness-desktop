@@ -8,6 +8,8 @@ import {
 
 export * from './errors.ts'
 export * from './d1n.ts'
+export * from './network.ts'
+import { describeNetworkFailure } from './network.ts'
 import { parseD1nBootstrap } from './d1n.ts'
 
 export interface SocHttpOptions {
@@ -131,7 +133,7 @@ export class SocHttp {
     try {
       res = await this.fetchImpl(url, init)
     } catch (err) {
-      throw new SocUpstreamError(`Network error reaching ${url}`, { cause: err })
+      throw new SocUpstreamError(`Network error reaching ${url}: ${describeNetworkFailure(err)}`, { cause: err })
     }
 
     const text = await res.text()

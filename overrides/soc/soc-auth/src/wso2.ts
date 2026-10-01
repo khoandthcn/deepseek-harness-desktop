@@ -31,7 +31,7 @@ export class SiemRefusalError extends SocAuthError {
 
 export type FetchLike = (input: string, init?: any) => Promise<Response>
 
-import { D1N_COOKIE, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
+import { D1N_COOKIE, describeNetworkFailure, parseD1nBootstrap } from '@deepseek-ai/dsh-soc-client'
 
 export interface Wso2LoginOptions {
   /** Base URL of the WSO2 IAM server, e.g. `https://iam.example`. */
@@ -179,7 +179,7 @@ export async function establishAppSession(
       res = await doFetch(url, { headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `SOC auth: the ${opts.clientId} authorize request to ${redactUrl(url)} failed (network error).`,
+        `SOC auth: the ${opts.clientId} authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
         { cause },
       )
     }
@@ -397,7 +397,7 @@ export async function establishSiemSession(
       res = await doFetch(url, { headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `SIEM auth: the authorize request to ${redactUrl(url)} failed (network error).`,
+        `SIEM auth: the authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
         { cause },
       )
     }
@@ -503,7 +503,7 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
       res = await doFetch(url, { ...init, headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `WSO2 login: request to ${redactUrl(url)} failed (network error).`,
+        `WSO2 login: request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
         { cause },
       )
     }

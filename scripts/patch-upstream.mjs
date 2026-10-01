@@ -68,6 +68,20 @@ function patch(relativePath, from, to) {
   console.log(`patched: ${relativePath}`)
 }
 
+// Trust the operating system's certificate authorities (and a user-named PEM
+// file) before the first request: on a network that inspects TLS, Node's own
+// list rejects every connection the browser on the same machine accepts.
+patch(
+  'apps/cli/src/profile-boot.ts',
+  "import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'\n",
+  "import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'\nimport { trustLocalAuthorities } from './trust-store.ts'\n",
+)
+patch(
+  'apps/cli/src/profile-boot.ts',
+  "  const disposeProxy = await installProxyFromEnvironment(\n",
+  "  trustLocalAuthorities(options.environment, (message) => { process.stderr.write(`${NAME}: ${message}\\n`) })\n  const disposeProxy = await installProxyFromEnvironment(\n",
+)
+
 // Prebuilt native modules keep their own signatures; the bundled upstream
 // Node.js loads them as it does for any npm install.
 patch(

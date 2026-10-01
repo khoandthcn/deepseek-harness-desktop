@@ -13,5 +13,15 @@
     "target": "packages/client/ui-settings-models/src/client/ProviderOnboarding.module.css",
     "source": "overrides/ui-settings-models/ProviderOnboarding.module.css",
     "upstreamSha256": null
+  },
+  {
+    "target": "apps/cli/src/trust-store.ts",
+    "source": "overrides/cli/trust-store.ts",
+    "upstreamSha256": null
+  },
+  {
+    "target": "apps/cli/tests/trust-store.spec.ts",
+    "source": "overrides/cli/trust-store.spec.ts",
+    "upstreamSha256": null
   }
 ]

@@ -52,6 +52,7 @@ function defs(authenticated: boolean) {
 
 const EXPECTED = [
   'soc_login',
+  'soc_check_network',
   'soar_search_alerts',
   'soar_group_alerts',
   'soar_get_alert_events',
@@ -62,7 +63,8 @@ const EXPECTED = [
   'soar_list_notifications',
 ]
 
-const READ_TOOLS = EXPECTED.filter(n => n !== 'soc_login')
+/** The tools that read the platform; signing in and checking the network need no session. */
+const READ_TOOLS = EXPECTED.filter(n => n !== 'soc_login' && n !== 'soc_check_network')
 
 describe('createSoarToolDefs', () => {
   it('defines exactly the expected tools', () => {
@@ -257,5 +259,55 @@ describe('authenticated happy paths', () => {
     await byName('soar_list_alert_fields').execute({})
     expect(adapter.listAlertTypes).toHaveBeenCalledWith({ page: 1, size: 50 })
     expect(adapter.listAlertFields).toHaveBeenCalledWith({})
+  })
+})
+
+describe('soc_check_network', () => {
+  /** What `fetch` throws: the reason sits in a nested cause. */
+  const failure = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) })
+
+  function check(probeFetch: typeof fetch, env: Record<string, string | undefined> = {}) {
+    const list = createSoarToolDefs({
+      adapter: fakeAdapter(),
+      auth: fakeAuth(false),
+      endpoints: () => ({ 'sign-in': 'https://iam.soc.example', soar: 'https://soar.soc.example/api', edr: '' }),
+      probeFetch,
+      env,
+    })
+    return list.find(d => d.name === 'soc_check_network')!
+  }
+
+  it('needs no session, probes each configured system once without credentials, and reports per system', async () => {
+    const probe = vi.fn(async (input: unknown) => {
+      if (String(input).startsWith('https://iam.')) throw failure('ENOTFOUND')
+      return new Response(null, { status: 302 })
+    })
+    const out = await check(probe as unknown as typeof fetch).execute({}) as any
+    expect(callsOf(probe).map(call => call[0])).toEqual(['https://iam.soc.example/', 'https://soar.soc.example/'])
+    for (const [, init] of callsOf(probe)) expect(init.headers).toBeUndefined()
+    expect(out).toMatchObject({ proxy: 'none', no_proxy: 'none', reachable: 1, unreachable: 1 })
+    expect(out.results[0]).toMatchObject({ system: 'sign-in', host: 'iam.soc.example', reachable: false, kind: 'dns', code: 'ENOTFOUND' })
+    expect(out.results[0].detail).toMatch(/set HTTPS_PROXY/)
+    expect(out.results[1]).toEqual({ system: 'soar', host: 'soar.soc.example', reachable: true, status: 302 })
+  })
+
+  it('shows the proxy in effect without its credentials, and checks extra URLs the same way', async () => {
+    const probe = vi.fn(async () => { throw failure('SELF_SIGNED_CERT_IN_CHAIN') })
+    const out = await check(probe as unknown as typeof fetch, {
+      HTTPS_PROXY: 'http://alice:s3cret@proxy.corp:3128', NO_PROXY: '.corp',
+    }).execute({ extra_urls: ['https://api.ti.example/v1', 'ftp://ignored'] }) as any
+    expect(out.proxy).toBe('http://proxy.corp:3128')
+    expect(JSON.stringify(out)).not.toContain('s3cret')
+    expect(out.no_proxy).toBe('.corp')
+    expect(out.results.map((r: any) => r.host)).toEqual(['iam.soc.example', 'soar.soc.example', 'api.ti.example'])
+    expect(out.results[2]).toMatchObject({ system: 'extra', kind: 'certificate' })
+    expect(out.results[2].detail).toMatch(/NODE_EXTRA_CA_CERTS/)
+  })
+
+  it('says where to configure the platform when nothing is configured', async () => {
+    const list = createSoarToolDefs({ adapter: fakeAdapter(), auth: fakeAuth(false) })
+    const out = await list.find(d => d.name === 'soc_check_network')!.execute({}) as any
+    expect(out.results).toEqual([])
+    expect(out.note).toMatch(/Settings → Plugins → SOC Cloud/)
   })
 })
