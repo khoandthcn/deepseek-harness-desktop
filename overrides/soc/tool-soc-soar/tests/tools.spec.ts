@@ -288,7 +288,7 @@ describe('soc_check_network', () => {
     expect(out).toMatchObject({ proxy: 'none', no_proxy: 'none', reachable: 1, unreachable: 1 })
     expect(out.results[0]).toMatchObject({ system: 'sign-in', host: 'iam.soc.example', reachable: false, kind: 'dns', code: 'ENOTFOUND' })
     expect(out.results[0].detail).toMatch(/set HTTPS_PROXY/)
-    expect(out.results[1]).toEqual({ system: 'soar', host: 'soar.soc.example', reachable: true, status: 302 })
+    expect(out.results[1]).toEqual({ system: 'soar', host: 'soar.soc.example', route: 'direct', reachable: true, status: 302 })
   })
 
   it('shows the proxy in effect without its credentials, and checks extra URLs the same way', async () => {
@@ -301,7 +301,21 @@ describe('soc_check_network', () => {
     expect(out.no_proxy).toBe('.corp')
     expect(out.results.map((r: any) => r.host)).toEqual(['iam.soc.example', 'soar.soc.example', 'api.ti.example'])
     expect(out.results[2]).toMatchObject({ system: 'extra', kind: 'certificate' })
-    expect(out.results[2].detail).toMatch(/NODE_EXTRA_CA_CERTS/)
+    expect(out.results[2].detail).toMatch(/~\/\.dsh\/certs/)
+    expect(out.results[2].route).toBe('proxy')
+  })
+
+  it('shows which hosts the bypass list sends direct, and why that fails', async () => {
+    const probe = vi.fn(async (input: unknown) => {
+      if (String(input).includes('iam.')) throw failure('ENOTFOUND')
+      return new Response(null, { status: 200 })
+    })
+    const out = await check(probe as unknown as typeof fetch, {
+      HTTPS_PROXY: 'http://proxy.corp:3128', NO_PROXY: 'soc.example,localhost',
+    }).execute({ extra_urls: ['https://api.ti.example'] }) as any
+    expect(out.results[0]).toMatchObject({ system: 'sign-in', route: 'direct', bypassed_by: 'NO_PROXY entry "soc.example"', kind: 'dns' })
+    expect(out.results[0].detail).toMatch(/remove "soc.example" from NO_PROXY/)
+    expect(out.results[2]).toMatchObject({ system: 'extra', route: 'proxy', reachable: true })
   })
 
   it('says where to configure the platform when nothing is configured', async () => {

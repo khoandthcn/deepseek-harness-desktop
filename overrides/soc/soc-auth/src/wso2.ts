@@ -179,7 +179,7 @@ export async function establishAppSession(
       res = await doFetch(url, { headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `SOC auth: the ${opts.clientId} authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
+        `SOC auth: the ${opts.clientId} authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause, url)}`,
         { cause },
       )
     }
@@ -397,7 +397,7 @@ export async function establishSiemSession(
       res = await doFetch(url, { headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `SIEM auth: the authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
+        `SIEM auth: the authorize request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause, url)}`,
         { cause },
       )
     }
@@ -503,7 +503,7 @@ export async function runWso2Login(opts: Wso2LoginOptions): Promise<Wso2LoginRes
       res = await doFetch(url, { ...init, headers, redirect: 'manual' })
     } catch (cause) {
       throw new SocAuthError(
-        `WSO2 login: request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause)}`,
+        `WSO2 login: request to ${redactUrl(url)} failed: ${describeNetworkFailure(cause, url)}`,
         { cause },
       )
     }

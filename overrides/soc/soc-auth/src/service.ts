@@ -573,7 +573,7 @@ export class SocAuthService {
       try {
         res = await doFetch(url, d1n === undefined ? {} : { headers: { cookie: `${D1N_COOKIE}=${d1n}` } })
       } catch (cause) {
-        throw new SocAuthError(`SOC auth: reading SOAR's client id (${url}) failed: ${describeNetworkFailure(cause)}`, { cause })
+        throw new SocAuthError(`SOC auth: reading SOAR's client id (${url}) failed: ${describeNetworkFailure(cause, url)}`, { cause })
       }
       if (res.status !== 200) {
         throw new SocAuthError(`SOC auth: reading SOAR's client id (${url}) returned HTTP ${res.status}.`)
@@ -659,7 +659,7 @@ export class SocAuthService {
         body: JSON.stringify({ code, client_id: params.clientId }),
       })
     } catch (cause) {
-      throw new SocAuthError(`SOC auth: the ${params.system} code exchange (${params.callbackUrl}) failed: ${describeNetworkFailure(cause)}`, { cause })
+      throw new SocAuthError(`SOC auth: the ${params.system} code exchange (${params.callbackUrl}) failed: ${describeNetworkFailure(cause, params.callbackUrl)}`, { cause })
     }
     if (res.status !== 200) {
       throw new SocAuthError(`SOC auth: the ${params.system} code exchange (${params.callbackUrl}) returned HTTP ${res.status}.`)
@@ -760,7 +760,7 @@ export class SocAuthService {
         body: JSON.stringify({ soc_token: sessionToken }),
       })
     } catch (cause) {
-      throw new SocAuthError(`SOC auth: the EDR token exchange (${url}) failed: ${describeNetworkFailure(cause)}`, { cause })
+      throw new SocAuthError(`SOC auth: the EDR token exchange (${url}) failed: ${describeNetworkFailure(cause, url)}`, { cause })
     }
 
     if (res.status === 401 || res.status === 403) {
@@ -978,7 +978,7 @@ export class SocAuthService {
           body,
         })
       } catch (cause) {
-        throw new SocAuthError(`SOC auth: the SIEM token exchange (${url}) failed: ${describeNetworkFailure(cause)}`, { cause })
+        throw new SocAuthError(`SOC auth: the SIEM token exchange (${url}) failed: ${describeNetworkFailure(cause, url)}`, { cause })
       }
       if (!afterBootstrap && response.status === 200) {
         const d1n = parseD1nBootstrap(await response.clone().text())
@@ -1108,7 +1108,7 @@ export class SocAuthService {
         if (cause instanceof Error && (cause.name === 'TimeoutError' || cause.name === 'AbortError')) {
           throw new SocAuthError(nsmStalledMessage(url, `no answer within ${NSM_SIGN_IN_TIMEOUT_MS / 1000}s`), { cause })
         }
-        throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) failed: ${describeNetworkFailure(cause)}`, { cause })
+        throw new SocAuthError(`SOC auth: the NSM sign-in (${url}) failed: ${describeNetworkFailure(cause, url)}`, { cause })
       }
       if (!afterBootstrap && response.status === 200) {
         const d1n = parseD1nBootstrap(await response.clone().text())
@@ -1171,7 +1171,7 @@ export class SocAuthService {
       })
     } catch (cause) {
       throw new SocAuthError(
-        `SOC auth: the SOAR access exchange (${url}) failed: ${describeNetworkFailure(cause)}`,
+        `SOC auth: the SOAR access exchange (${url}) failed: ${describeNetworkFailure(cause, url)}`,
         { cause },
       )
     }

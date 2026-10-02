@@ -21,7 +21,7 @@ import type {
   SearchCasesOptions,
   SearchTicketsOptions,
 } from './adapter.ts'
-import { diagnoseNetworkFailure } from '@deepseek-ai/dsh-soc-client'
+import { diagnoseNetworkFailure, routeFor, withoutCredentials } from '@deepseek-ai/dsh-soc-client'
 
 /** The adapter surface the tools drive; `SoarAdapter` satisfies it structurally. */
 export interface SoarAdapterLike {
@@ -92,20 +92,6 @@ export interface CreateSoarToolDefsOptions {
 /** How long one reachability probe may take before it is reported as a timeout. */
 export const PROBE_TIMEOUT_MS = 10_000
 
-/**
- * A proxy URL fit to show: a proxy that needs a login carries it in the URL,
- * and that part is never displayed.
- */
-function withoutCredentials(value: string): string {
-  try {
-    const url = new URL(value)
-    url.username = ''
-    url.password = ''
-    return url.toString().replace(/\/$/, '')
-  } catch {
-    return '(set, but not a URL)'
-  }
-}
 
 /**
  * Returned instead of throwing when no SOC session exists, so the model reads a
@@ -229,16 +215,21 @@ export function createSoarToolDefs({ adapter, auth, endpoints, probeFetch, env }
             return { system, host: url, reachable: false, kind: 'unknown', code: '', detail: 'not a valid URL' }
           }
           const host = new URL(origin).host
+          const route = routeFor(origin, environment)
+          // Which way the request left: a host the bypass list sends direct
+          // fails on this network's DNS while the browser, proxied, succeeds.
+          const via = route.proxied ? { route: 'proxy' } : route.bypassedBy !== undefined
+            ? { route: 'direct', bypassed_by: `NO_PROXY entry "${route.bypassedBy}"` } : { route: 'direct' }
           try {
             // Any answer at all proves the path: name, route, proxy and TLS.
             // The status is reported but not judged — a sign-in page answers
             // 302 or 403 to a request that carries nothing.
             const res = await doFetch(`${origin}/`, { redirect: 'manual', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
             await res.body?.cancel().catch(() => {})
-            return { system, host, reachable: true, status: res.status }
+            return { system, host, ...via, reachable: true, status: res.status }
           } catch (error) {
-            const failure = diagnoseNetworkFailure(error, environment)
-            return { system, host, reachable: false, kind: failure.kind, code: failure.code, detail: failure.message }
+            const failure = diagnoseNetworkFailure(error, environment, origin)
+            return { system, host, ...via, reachable: false, kind: failure.kind, code: failure.code, detail: failure.message }
           }
         }))
         const proxy = ['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY']

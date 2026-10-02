@@ -133,7 +133,7 @@ export class SocHttp {
     try {
       res = await this.fetchImpl(url, init)
     } catch (err) {
-      throw new SocUpstreamError(`Network error reaching ${url}: ${describeNetworkFailure(err)}`, { cause: err })
+      throw new SocUpstreamError(`Network error reaching ${url}: ${describeNetworkFailure(err, url)}`, { cause: err })
     }
 
     const text = await res.text()

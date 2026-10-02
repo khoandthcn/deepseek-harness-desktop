@@ -30,8 +30,11 @@ const CERTIFICATE_CODES = new Set([
   'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_SIGNATURE_FAILURE',
 ])
 
-/** Where the proxy and the trusted authorities are set, said once. */
-const WHERE = 'in the environment the application starts with, or in the `.env` file of the Harness home (`~/.dsh/.env`)'
+/** Where the proxy is set, said once. */
+const WHERE = 'in the `.env` file of the Harness home (`~/.dsh/.env`), or in the environment the application starts with'
+
+/** Where a certificate authority the machine should trust goes. */
+const CA_WHERE = 'copy that authority\'s certificate (.pem, .crt or .cer) into the `certs` folder of the Harness home (`~/.dsh/certs`)'
 
 /**
  * Every error in a failure, outermost first: the `cause` chain, and the
@@ -66,20 +69,100 @@ export function proxyConfigured(env: Record<string, string | undefined> = proces
     .some(name => (env[name] ?? '').trim() !== '')
 }
 
+/** How one request leaves this machine. */
+export interface NetworkRoute {
+  /** True when the request goes to the proxy. */
+  proxied: boolean
+  /** The proxy, without any credential in it; absent when direct. */
+  proxy?: string
+  /** The bypass entry that sent this host direct although a proxy is set. */
+  bypassedBy?: string
+}
+
+const env = (values: Record<string, string | undefined>, ...names: string[]): string =>
+  names.map(name => (values[name] ?? '').trim()).find(value => value !== '') ?? ''
+
+/** A proxy URL fit to show: a proxy that needs a login carries it in the URL. */
+export function withoutCredentials(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return '(set, but not a URL)'
+  }
+}
+
+/**
+ * The bypass entry a host matches, read the way the launcher's proxy policy
+ * reads it: an entry names a host and every subdomain under it, a leading `.`
+ * or `*.` means the same, an entry may carry `:port`, and `*` matches all.
+ * @returns the entry as written, or undefined when the host is not bypassed.
+ */
+export function bypassEntryFor(host: string, port: string, noProxy: string): string | undefined {
+  const name = host.toLowerCase().replace(/^\[|\]$/g, '')
+  for (const raw of noProxy.split(/[\s,]+/)) {
+    const entry = raw.trim()
+    if (entry === '') continue
+    if (entry === '*') return entry
+    const match = /^(?:\*?\.)?(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(entry.toLowerCase())
+    if (!match) continue
+    const [, entryHost, entryPort] = match
+    const bare = entryHost!.replace(/^\[|\]$/g, '')
+    if (entryPort !== undefined && entryPort !== port) continue
+    if (name === bare || name.endsWith(`.${bare}`)) return entry
+  }
+  return undefined
+}
+
+/**
+ * Whether a request to this URL goes through the proxy, as the policy the
+ * launcher installed decides it. The launcher publishes the policy it resolved
+ * through these variables, so they hold what is in effect.
+ * @param url - the request URL.
+ * @param values - the process environment.
+ */
+export function routeFor(url: string, values: Record<string, string | undefined> = process.env): NetworkRoute {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return { proxied: false }
+  }
+  const https = parsed.protocol === 'https:'
+  const proxy = https
+    ? env(values, 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'http_proxy', 'HTTP_PROXY')
+    : env(values, 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY')
+  if (proxy === '') return { proxied: false }
+  const port = parsed.port || (https ? '443' : '80')
+  const loopback = /^(localhost|127(\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i.test(parsed.hostname)
+  const bypassedBy = loopback ? 'localhost' : bypassEntryFor(parsed.hostname, port, env(values, 'no_proxy', 'NO_PROXY'))
+  if (bypassedBy !== undefined) return { proxied: false, proxy: withoutCredentials(proxy), bypassedBy }
+  return { proxied: true, proxy: withoutCredentials(proxy) }
+}
+
 /**
  * Classify a transport failure and say what to do about it.
  * @param error - what `fetch` threw.
- * @param env - the process environment, read for whether a proxy is set.
+ * @param env - the process environment, read for the proxy in effect.
+ * @param url - the request URL, when known: it decides whether this host went
+ *   to the proxy or was sent direct by the bypass list.
  * @returns the failure, with a message that names the cause and the remedy.
  */
 export function diagnoseNetworkFailure(
   error: unknown,
   env: Record<string, string | undefined> = process.env,
+  url?: string,
 ): NetworkFailure {
   const errors = chain(error)
-  const proxied = proxyConfigured(env)
+  const route = url === undefined ? undefined : routeFor(url, env)
+  const bypassed = route?.bypassedBy
+  const proxied = route === undefined ? proxyConfigured(env) : route.proxied
   const find = (codes: Set<string>) => errors.find(entry => codes.has(entry.code))
-  const viaProxy = proxied ? 'A proxy is configured, so the request went to it.' : 'No proxy is configured, so the request went direct.'
+  const viaProxy = bypassed !== undefined
+    ? `A proxy is configured, but this host matches "${bypassed}" in NO_PROXY, so the request went direct.`
+    : proxied ? 'A proxy is configured, so the request went to it.' : 'No proxy is configured, so the request went direct.'
 
   // A proxy that answers the CONNECT with anything but 200 says so in words.
   const refused = errors.map(entry => /Proxy response \((\d{3})\)/.exec(entry.message)).find(Boolean)
@@ -95,13 +178,23 @@ export function diagnoseNetworkFailure(
     }
   }
   const certificate = find(CERTIFICATE_CODES)
+  if (certificate?.code === 'ERR_TLS_CERT_ALTNAME_INVALID') {
+    return {
+      kind: 'certificate',
+      code: certificate.code,
+      message: 'the server presented a certificate for a different host name (ERR_TLS_CERT_ALTNAME_INVALID). '
+        + 'The configured address does not match the server, or a device on the path answered in its place: '
+        + 'check the platform domain, and open the address in a browser to see whose certificate it shows.',
+    }
+  }
   if (certificate) {
     return {
       kind: 'certificate',
       code: certificate.code,
       message: `the server's TLS certificate is not trusted (${certificate.code}). A network that inspects TLS re-signs `
-        + 'traffic with its own certificate authority. Install that authority in the operating system\'s trust store — the '
-        + `application trusts that store — or name its PEM file in NODE_EXTRA_CA_CERTS ${WHERE}, then restart the application.`,
+        + 'traffic with its own certificate authority. The application trusts the operating system\'s store, so either '
+        + `install that authority there or ${CA_WHERE}, then restart the application.`
+        + (certificate.code === 'CERT_HAS_EXPIRED' ? ' An expired certificate can also be the server\'s own: check the date in a browser.' : ''),
     }
   }
   const dns = find(DNS_CODES)
@@ -110,7 +203,9 @@ export function diagnoseNetworkFailure(
       kind: 'dns',
       code: dns.code,
       message: `the host name did not resolve (${dns.code}). ${viaProxy} `
-        + (proxied
+        + (bypassed !== undefined
+          ? `This network's own DNS does not know the host: remove "${bypassed}" from NO_PROXY so it goes through the proxy, as a browser's does.`
+          : proxied
           ? 'The name that failed is then the proxy\'s own, or the host is on the bypass list (NO_PROXY) and unknown to this network\'s DNS.'
           : 'A network that reaches outside hosts only through a proxy does not resolve their names itself: set HTTPS_PROXY '
             + `(http://host:port) ${WHERE}, and list internal domains in NO_PROXY. A browser may work regardless, because it `
@@ -125,7 +220,9 @@ export function diagnoseNetworkFailure(
       kind: connect ? 'connect' : 'timeout',
       code: entry.code,
       message: `no connection could be made (${entry.code}). ${viaProxy} `
-        + (proxied
+        + (bypassed !== undefined
+          ? `If the host is reached only through the proxy, remove "${bypassed}" from NO_PROXY.`
+          : proxied
           ? 'If the host is internal to this network, add its domain to NO_PROXY so it is reached direct; otherwise the proxy cannot reach it.'
           : `If this network reaches that host only through a proxy, set HTTPS_PROXY (http://host:port) ${WHERE}.`),
     }
@@ -152,6 +249,6 @@ export function diagnoseNetworkFailure(
  * @param error - what `fetch` threw.
  * @returns the cause and the remedy.
  */
-export function describeNetworkFailure(error: unknown): string {
-  return diagnoseNetworkFailure(error).message
+export function describeNetworkFailure(error: unknown, url?: string): string {
+  return diagnoseNetworkFailure(error, process.env, url).message
 }

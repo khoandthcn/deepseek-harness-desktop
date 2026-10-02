@@ -68,8 +68,8 @@ function patch(relativePath, from, to) {
   console.log(`patched: ${relativePath}`)
 }
 
-// Trust the operating system's certificate authorities (and a user-named PEM
-// file) before the first request: on a network that inspects TLS, Node's own
+// Trust the operating system's certificate authorities (and those in the
+// Harness home's certs folder) before the first request: on a network that inspects TLS, Node's own
 // list rejects every connection the browser on the same machine accepts.
 patch(
   'apps/cli/src/profile-boot.ts',
@@ -79,7 +79,7 @@ patch(
 patch(
   'apps/cli/src/profile-boot.ts',
   "  const disposeProxy = await installProxyFromEnvironment(\n",
-  "  trustLocalAuthorities(options.environment, (message) => { process.stderr.write(`${NAME}: ${message}\\n`) })\n  const disposeProxy = await installProxyFromEnvironment(\n",
+  "  trustLocalAuthorities(options.environment, (message) => { process.stderr.write(`${NAME}: ${message}\\n`) }, { home: resolveDshHome() })\n  const disposeProxy = await installProxyFromEnvironment(\n",
 )
 
 // Prebuilt native modules keep their own signatures; the bundled upstream

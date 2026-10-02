@@ -1,5 +1,7 @@
+import { X509Certificate } from 'node:crypto'
+import { rootCertificates } from 'node:tls'
 import { describe, expect, it, vi } from 'vitest'
-import { trustLocalAuthorities, type TrustEnvironment } from '../src/trust-store.ts'
+import { certificatesIn, trustLocalAuthorities, type TrustEnvironment } from '../src/trust-store.ts'
 
 const pem = (body: string) => `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`
 
@@ -31,66 +33,91 @@ function fakeTls(stores: { default: string[], system: string[] | Error }) {
   }
 }
 
+/** A folder of files under `/home/certs`, as the options' seams read it. */
+function folder(files: Record<string, string | Buffer>) {
+  return {
+    home: '/home',
+    listDir: vi.fn((path: string) => {
+      expect(path).toMatch(/[\\/]home[\\/]certs$/)
+      return Object.keys(files)
+    }),
+    readFile: vi.fn((path: string) => {
+      const name = path.split(/[\\/]/).pop()!
+      const value = files[name]!
+      return Buffer.isBuffer(value) ? value : Buffer.from(value)
+    }),
+  }
+}
+
 describe('trustLocalAuthorities', () => {
   it('adds the operating system store to what Node already trusts, without duplicates', () => {
     const { api, set } = fakeTls({ default: [pem('A'), pem('B')], system: [pem('B'), pem('CORP')] })
     const report = vi.fn()
-    expect(trustLocalAuthorities(environment({}), report, api)).toEqual({ system: 1, extra: 0 })
+    expect(trustLocalAuthorities(environment({}), report, { api })).toEqual({ system: 1, files: 0 })
     expect(set).toHaveBeenCalledWith([pem('A'), pem('B'), pem('CORP')])
     expect(report).not.toHaveBeenCalled()
   })
 
   it('leaves the default list alone when there is nothing to add', () => {
     const { api, set } = fakeTls({ default: [pem('A')], system: [pem('A')] })
-    expect(trustLocalAuthorities(environment({}), vi.fn(), api)).toEqual({ system: 0, extra: 0 })
+    expect(trustLocalAuthorities(environment({}), vi.fn(), { api })).toEqual({ system: 0, files: 0 })
     expect(set).not.toHaveBeenCalled()
   })
 
-  it('reads the file named in the Harness home .env, which Node itself never sees', () => {
+  it('trusts the certificate files in the Harness home certs folder, and nothing else there', () => {
     const { api, set } = fakeTls({ default: [pem('A')], system: [] })
-    const readFile = vi.fn(() => `junk\n${pem('CORP-ROOT')}\n${pem('CORP-ISSUING')}\n`)
-    const env = environment({ 'user-env': { NODE_EXTRA_CA_CERTS: ' /etc/corp/ca.pem ' } })
-    expect(trustLocalAuthorities(env, vi.fn(), api, readFile)).toEqual({ system: 0, extra: 2 })
-    expect(readFile).toHaveBeenCalledWith('/etc/corp/ca.pem')
-    expect(set).toHaveBeenCalledWith([pem('A'), pem('CORP-ROOT'), pem('CORP-ISSUING')])
+    const files = folder({ 'gateway.crt': `junk\n${pem('GW-ROOT')}\n${pem('GW-ISSUING')}\n`, 'notes.txt': pem('IGNORED') })
+    expect(trustLocalAuthorities(environment({}), vi.fn(), { api, ...files })).toEqual({ system: 0, files: 2 })
+    expect(set).toHaveBeenCalledWith([pem('A'), pem('GW-ROOT'), pem('GW-ISSUING')])
+    expect(files.readFile).toHaveBeenCalledTimes(1)
   })
 
-  it('does not let a project .env choose whom to trust or switch the system store off', () => {
-    const { api, set } = fakeTls({ default: [pem('A')], system: [pem('CORP')] })
-    const readFile = vi.fn(() => pem('EVIL'))
-    const env = environment({ 'project-env': { NODE_EXTRA_CA_CERTS: '/repo/evil.pem', DSH_TRUST_SYSTEM_CA: '0' } })
-    expect(trustLocalAuthorities(env, vi.fn(), api, readFile)).toEqual({ system: 1, extra: 0 })
-    expect(readFile).not.toHaveBeenCalled()
-    expect(set).toHaveBeenCalledWith([pem('A'), pem('CORP')])
-  })
-
-  it('leaves the system store out when the user opts out', () => {
-    const { api, set } = fakeTls({ default: [pem('A')], system: [pem('CORP')] })
-    expect(trustLocalAuthorities(environment({ process: { DSH_TRUST_SYSTEM_CA: '0' } }), vi.fn(), api)).toEqual({ system: 0, extra: 0 })
-    expect(set).not.toHaveBeenCalled()
-  })
-
-  it('reports an unreadable store or file and carries on with the rest', () => {
-    const { api, set } = fakeTls({ default: [pem('A')], system: new Error('access denied') })
-    const report = vi.fn()
-    const env = environment({ process: { NODE_EXTRA_CA_CERTS: '/missing.pem' } })
-    const readFile = () => { throw new Error('ENOENT: no such file') }
-    expect(trustLocalAuthorities(env, report, api, readFile)).toEqual({ system: 0, extra: 0 })
-    expect(report.mock.calls.map(call => call[0])).toEqual([
-      expect.stringMatching(/certificate store could not be read \(access denied\)/),
-      expect.stringMatching(/NODE_EXTRA_CA_CERTS could not be read \(ENOENT/),
-    ])
-    expect(set).not.toHaveBeenCalled()
-  })
-
-  it('says so when the named file holds no certificate', () => {
+  it('treats a missing certs folder as nothing to add, without a warning', () => {
     const { api } = fakeTls({ default: [pem('A')], system: [] })
     const report = vi.fn()
-    trustLocalAuthorities(environment({ process: { NODE_EXTRA_CA_CERTS: '/x.pem' } }), report, api, () => 'not a pem')
-    expect(report).toHaveBeenCalledWith(expect.stringMatching(/holds no PEM certificate/))
+    const listDir = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) }
+    expect(trustLocalAuthorities(environment({}), report, { api, home: '/home', listDir })).toEqual({ system: 0, files: 0 })
+    expect(report).not.toHaveBeenCalled()
+  })
+
+  it('reports a file that holds no certificate and carries on with the others', () => {
+    const { api } = fakeTls({ default: [pem('A')], system: [] })
+    const report = vi.fn()
+    const files = folder({ 'empty.pem': 'not a certificate', 'good.pem': pem('GOOD') })
+    expect(trustLocalAuthorities(environment({}), report, { api, ...files })).toEqual({ system: 0, files: 1 })
+    expect(report).toHaveBeenCalledWith(expect.stringMatching(/empty\.pem holds no certificate/))
+  })
+
+  it('leaves the system store out only when the launching environment says so, never a .env file', () => {
+    const { api, set } = fakeTls({ default: [pem('A')], system: [pem('CORP')] })
+    expect(trustLocalAuthorities(environment({ 'user-env': { DSH_TRUST_SYSTEM_CA: '0' } }), vi.fn(), { api })).toEqual({ system: 1, files: 0 })
+    set.mockClear()
+    expect(trustLocalAuthorities(environment({ process: { DSH_TRUST_SYSTEM_CA: '0' } }), vi.fn(), { api })).toEqual({ system: 0, files: 0 })
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('reports an unreadable system store and still trusts the folder', () => {
+    const { api, set } = fakeTls({ default: [pem('A')], system: new Error('access denied') })
+    const report = vi.fn()
+    expect(trustLocalAuthorities(environment({}), report, { api, ...folder({ 'gw.pem': pem('GW') }) })).toEqual({ system: 0, files: 1 })
+    expect(report).toHaveBeenCalledWith(expect.stringMatching(/certificate store could not be read \(access denied\)/))
+    expect(set).toHaveBeenCalledWith([pem('A'), pem('GW')])
   })
 
   it('does nothing on a runtime that cannot change its default list', () => {
-    expect(trustLocalAuthorities(environment({}), vi.fn(), {})).toEqual({ system: 0, extra: 0 })
+    expect(trustLocalAuthorities(environment({}), vi.fn(), { api: {} })).toEqual({ system: 0, files: 0 })
+  })
+})
+
+describe('certificatesIn', () => {
+  it('reads a DER certificate, the form Windows exports by default, as PEM', () => {
+    const sample = new X509Certificate(rootCertificates[0]!)
+    const out = certificatesIn(sample.raw)
+    expect(out).toHaveLength(1)
+    expect(new X509Certificate(out[0]!).fingerprint256).toBe(sample.fingerprint256)
+  })
+
+  it('reads every block of a PEM bundle and normalises Windows line endings', () => {
+    expect(certificatesIn(Buffer.from(`${pem('A')}\r\n${pem('B')}`.replace(/\n/g, '\r\n')))).toEqual([pem('A'), pem('B')])
   })
 })

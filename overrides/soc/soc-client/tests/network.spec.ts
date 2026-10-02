@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diagnoseNetworkFailure, proxyConfigured } from '../src/network.ts'
+import { bypassEntryFor, diagnoseNetworkFailure, proxyConfigured, routeFor } from '../src/network.ts'
 
 /** What `fetch` throws: a bare "fetch failed" whose reason is a nested cause. */
 function fetchFailed(cause: unknown): TypeError {
@@ -27,9 +27,18 @@ describe('diagnoseNetworkFailure', () => {
     for (const code of ['SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']) {
       const out = diagnoseNetworkFailure(fetchFailed(coded(code)), {})
       expect(out).toMatchObject({ kind: 'certificate', code })
-      expect(out.message).toMatch(/operating system's trust store/)
-      expect(out.message).toMatch(/NODE_EXTRA_CA_CERTS/)
+      expect(out.message).toMatch(/operating system's store/)
+      expect(out.message).toMatch(/~\/\.dsh\/certs/)
+      // Naming that variable for the home .env would stop the application from starting.
+      expect(out.message).not.toMatch(/NODE_EXTRA_CA_CERTS/)
     }
+  })
+
+  it('reads a certificate for another host name as a wrong address, not as an authority to install', () => {
+    const out = diagnoseNetworkFailure(fetchFailed(coded('ERR_TLS_CERT_ALTNAME_INVALID')), {})
+    expect(out).toMatchObject({ kind: 'certificate', code: 'ERR_TLS_CERT_ALTNAME_INVALID' })
+    expect(out.message).toMatch(/different host name/)
+    expect(out.message).not.toMatch(/certs/)
   })
 
   it('finds the reason inside an aggregate, as a dual-stack connect reports it', () => {
@@ -72,5 +81,50 @@ describe('proxyConfigured', () => {
     expect(proxyConfigured({ HTTPS_PROXY: '  ' })).toBe(false)
     expect(proxyConfigured({ https_proxy: 'http://p:1' })).toBe(true)
     expect(proxyConfigured({ ALL_PROXY: 'http://p:1' })).toBe(true)
+  })
+})
+
+describe('routeFor', () => {
+  const PROXY = { HTTPS_PROXY: 'http://alice:s3cret@192.0.2.8:3128', NO_PROXY: 'corp.example,localhost,127.0.0.1' }
+
+  it('sends a host to the proxy, and shows the proxy without its credentials', () => {
+    expect(routeFor('https://iam.soc.example/oauth2', PROXY)).toEqual({ proxied: true, proxy: 'http://192.0.2.8:3128' })
+  })
+
+  it('sends a host and its subdomains direct when the bypass list names the domain', () => {
+    expect(routeFor('https://iam.corp.example/', PROXY)).toMatchObject({ proxied: false, bypassedBy: 'corp.example' })
+    expect(routeFor('https://corp.example/', PROXY)).toMatchObject({ proxied: false, bypassedBy: 'corp.example' })
+    expect(routeFor('https://notcorp.example/', PROXY)).toMatchObject({ proxied: true })
+  })
+
+  it('goes direct with no proxy set, and keeps loopback direct', () => {
+    expect(routeFor('https://iam.soc.example/', {})).toEqual({ proxied: false })
+    expect(routeFor('http://127.0.0.1:8080/', { HTTP_PROXY: 'http://p:1' })).toMatchObject({ proxied: false })
+  })
+})
+
+describe('bypassEntryFor', () => {
+  it('reads leading dots, wildcards, ports and the catch-all as the launcher does', () => {
+    expect(bypassEntryFor('a.b.example', '443', '.b.example')).toBe('.b.example')
+    expect(bypassEntryFor('a.b.example', '443', '*.b.example')).toBe('*.b.example')
+    expect(bypassEntryFor('a.b.example', '443', 'b.example:8443')).toBeUndefined()
+    expect(bypassEntryFor('a.b.example', '8443', 'b.example:8443')).toBe('b.example:8443')
+    expect(bypassEntryFor('anything', '443', 'x, *')).toBe('*')
+  })
+})
+
+describe('diagnoseNetworkFailure with the request URL', () => {
+  it('names the bypass entry that sent an unresolvable host direct, and says to remove it', () => {
+    const env = { HTTPS_PROXY: 'http://192.0.2.8:3128', NO_PROXY: 'corp.example,soc.example' }
+    const out = diagnoseNetworkFailure(fetchFailed(coded('ENOTFOUND')), env, 'https://iam.soc.example/oauth2/authorize')
+    expect(out.kind).toBe('dns')
+    expect(out.message).toMatch(/matches "soc.example" in NO_PROXY, so the request went direct/)
+    expect(out.message).toMatch(/remove "soc.example" from NO_PROXY/)
+  })
+
+  it('keeps the proxied advice for a host the bypass list does not name', () => {
+    const env = { HTTPS_PROXY: 'http://192.0.2.8:3128', NO_PROXY: 'corp.example' }
+    const out = diagnoseNetworkFailure(fetchFailed(coded('ENOTFOUND')), env, 'https://iam.soc.example/')
+    expect(out.message).toMatch(/A proxy is configured, so the request went to it/)
   })
 })
