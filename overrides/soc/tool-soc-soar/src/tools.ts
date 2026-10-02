@@ -6,11 +6,9 @@
  * `execute` bodies) is unit-testable standalone. `index.ts` is the thin Cordis
  * wrapper that feeds each definition through `defineTool` and registers it.
  *
- * Slice 1 is **read-only**: every tool here only searches or lists. When SOAR
- * mutations arrive (assign an alert, change a ticket status, run a playbook)
- * they must NOT simply be added alongside these — a write tool needs an explicit
- * approval gate so the user confirms the change before it reaches the platform.
- * Nothing below is such a gate, because nothing below writes.
+ * Every tool here only searches or lists. The tools that change the platform
+ * live in `writes.ts`, behind the approval gate the plugin installs; a new
+ * write belongs there, never alongside these.
  */
 
 import type {
@@ -126,7 +124,7 @@ function renderJson(_args: unknown, value: unknown): { type: 'text'; text: strin
 }
 
 /** Every tool returns upstream JSON verbatim, so the output schema is open. */
-const JSON_OUTPUT = {
+export const JSON_OUTPUT = {
   schema: { type: 'json' },
   render: renderJson,
 } as const

@@ -88,6 +88,11 @@ export class SocHttp {
     return this.request<T>('GET', path)
   }
 
+  /** PUT a JSON body: a partial update, as the platform's own pages send it. */
+  async putJson<T = unknown>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, body)
+  }
+
   private buildHeaders(hasBody: boolean): Record<string, string> {
     const headers: Record<string, string> = {
       accept: 'application/json',

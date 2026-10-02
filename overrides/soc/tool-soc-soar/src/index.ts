@@ -1,6 +1,7 @@
 /**
- * `tool-soc-soar` — a thin Cordis plugin registering `soc_login` and the
- * read-only SOAR tools.
+ * `tool-soc-soar` — a thin Cordis plugin registering `soc_login`, the SOAR
+ * read tools, and the few write tools (comment, close a case, open a ticket),
+ * each of which waits for the user's approval before it runs.
  *
  * All the behaviour lives in `tools.ts`, which is dependency-free and unit
  * tested; this file only wires it to the harness: build the HTTP client and
@@ -14,12 +15,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { SocHttp } from '@deepseek-ai/dsh-soc-client'
 import type {} from '@deepseek-ai/dsh-soc-auth'
 import { SoarAdapter, type SoarHttp } from './adapter.ts'
-import { createSoarToolDefs, type SoarToolDef } from './tools.ts'
+import { createSoarToolDefs, JSON_OUTPUT, NOT_AUTHENTICATED, type SoarToolDef } from './tools.ts'
+import { createSoarWriteToolDefs, describeWrite, SoarWriter, WRITE_TOOL_NAMES, type SoarWriteHttp } from './writes.ts'
 
 export * from './contracts.ts'
 export * from './query.ts'
 export * from './adapter.ts'
 export * from './tools.ts'
+export * from './writes.ts'
 
 /**
  * The definitions are typed against a local structural mirror of the schema DSL
@@ -66,7 +69,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const httpForScope = (scope: string): SocHttp =>
     new SocHttp(soarBaseUrl, { authHeaders: () => auth.authHeadersForSoar(scope) })
 
-  const soarHttp: SoarHttp = {
+  const soarHttp: SoarHttp & SoarWriteHttp = {
     async postJson<T>(path: string, body: unknown, scope: string): Promise<T> {
       await auth.soarBearer(scope)
       return httpForScope(scope).postJson<T>(path, body)
@@ -74,6 +77,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     async getJson<T>(path: string, scope: string): Promise<T> {
       await auth.soarBearer(scope)
       return httpForScope(scope).getJson<T>(path)
+    },
+    async putJson<T>(path: string, body: unknown, scope: string): Promise<T> {
+      await auth.soarBearer(scope)
+      return httpForScope(scope).putJson<T>(path, body)
     },
   }
 
@@ -90,4 +97,23 @@ export function apply(ctx: Context, config: Config = {}): void {
   for (const def of createSoarToolDefs({ adapter, auth, endpoints })) {
     ctx.tools.register(define(def))
   }
+
+  const writer = new SoarWriter({ http: soarHttp, defaultTenant: tenant })
+  for (const def of createSoarWriteToolDefs({
+    writer,
+    isAuthenticated: () => auth.isAuthenticated(),
+    notAuthenticated: NOT_AUTHENTICATED,
+    output: JSON_OUTPUT,
+  })) {
+    ctx.tools.register(define(def))
+  }
+
+  // Every call that changes the platform waits for the user: the approval
+  // states the exact action, built from the arguments that will be sent.
+  // Without an approval answerer the harness denies the call (fails closed).
+  ctx.on('tools/pre-execute', (exec, next) => {
+    if (!WRITE_TOOL_NAMES.has(exec.name)) return next()
+    const args = exec.arguments !== null && typeof exec.arguments === 'object' ? exec.arguments as Record<string, unknown> : {}
+    return Promise.resolve({ kind: 'ask' as const, reason: describeWrite(exec.name, args) })
+  })
 }
