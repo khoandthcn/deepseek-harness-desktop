@@ -82,6 +82,59 @@ patch(
   "  trustLocalAuthorities(options.environment, (message) => { process.stderr.write(`${NAME}: ${message}\\n`) }, { home: resolveDshHome() })\n  const disposeProxy = await installProxyFromEnvironment(\n",
 )
 
+// An About section in Settings: the application, its version and build, and
+// where newer installers are published — what a support request asks for first.
+patch(
+  'packages/client/ui-settings-general/src/client/index.ts',
+  "import { GeneralSection } from './GeneralSection.tsx'\n",
+  "import { GeneralSection } from './GeneralSection.tsx'\nimport { AboutSection } from './AboutSection.tsx'\n",
+)
+patch(
+  'packages/client/ui-settings-general/src/client/index.ts',
+  "  }, GeneralSection))\n}",
+  "  }, GeneralSection))\n  ctx.slots.inject('settings.section', () => ctx.slots.register({\n    name: 'settings.section',\n    id: 'about',\n    order: 100,\n    label: () => t('about.nav'),\n    locale: NS,\n  }, AboutSection))\n}",
+)
+patch(
+  'packages/client/ui-settings-general/src/client/locales.ts',
+  "  'connection.restart': '连接中断，正在自动重试，点击立即重连',\n",
+  "  'connection.restart': '连接中断，正在自动重试，点击立即重连',\n"
+  + "  'about.nav': '关于',\n  'about.description': '报告问题时，请附上以下信息。',\n"
+  + "  'about.app': '应用',\n  'about.version': '版本',\n  'about.build': '构建',\n  'about.runtime': '运行时',\n"
+  + "  'about.platform': '操作系统',\n  'about.releases': '下载新版本',\n  'about.copy': '复制',\n"
+  + "  'about.copyAll': '复制全部信息',\n  'about.copied': '已复制',\n  'about.copyFailed': '无法写入剪贴板，请手动选择文本复制',\n",
+)
+patch(
+  'packages/client/ui-settings-general/src/client/locales.ts',
+  "  'connection.restart': 'Reconnecting automatically, reconnect now',\n",
+  "  'connection.restart': 'Reconnecting automatically, reconnect now',\n"
+  + "  'about.nav': 'About',\n  'about.description': 'Include this information when you report a problem.',\n"
+  + "  'about.app': 'Application',\n  'about.version': 'Version',\n  'about.build': 'Build',\n  'about.runtime': 'Runtime',\n"
+  + "  'about.platform': 'Operating system',\n  'about.releases': 'Newer versions',\n  'about.copy': 'Copy',\n"
+  + "  'about.copyAll': 'Copy all information',\n  'about.copied': 'Copied',\n  'about.copyFailed': 'The clipboard refused; select the text and copy it by hand',\n",
+)
+
+// The upstream tests count the sections this package registers; About is a second one.
+patch(
+  'packages/client/ui-settings-general/tests/shell.client.spec.ts',
+  "    expect(sections.getSnapshot()).toEqual([GENERAL])\n",
+  "    const ABOUT = { id: 'about', order: 100, label: 'about.nav' }\n    expect(sections.getSnapshot()).toEqual([GENERAL, ABOUT])\n",
+)
+patch(
+  'packages/client/ui-settings-general/tests/shell.client.spec.ts',
+  "      { id: 'z', order: 20, label: 'Z' },\n    ])\n",
+  "      { id: 'z', order: 20, label: 'Z' },\n      ABOUT,\n    ])\n",
+)
+patch(
+  'packages/client/ui-settings-general/tests/apply.client.spec.ts',
+  "      expect(after.slots.entries(name)).toHaveLength(1)\n",
+  "      expect(after.slots.entries(name)).toHaveLength(name === 'settings.section' ? 2 : 1)\n",
+)
+patch(
+  'packages/client/ui-settings-general/tests/apply.client.spec.ts',
+  "      expect(b.slots.entries(name)).toHaveLength(1)\n",
+  "      expect(b.slots.entries(name)).toHaveLength(name === 'settings.section' ? 2 : 1)\n",
+)
+
 // Prebuilt native modules keep their own signatures; the bundled upstream
 // Node.js loads them as it does for any npm install.
 patch(

@@ -23,5 +23,20 @@
     "target": "apps/cli/tests/trust-store.spec.ts",
     "source": "overrides/cli/trust-store.spec.ts",
     "upstreamSha256": null
+  },
+  {
+    "target": "packages/client/ui-settings-general/src/client/AboutSection.tsx",
+    "source": "overrides/ui-settings-general/AboutSection.tsx",
+    "upstreamSha256": null
+  },
+  {
+    "target": "packages/client/ui-settings-general/src/client/AboutSection.module.css",
+    "source": "overrides/ui-settings-general/AboutSection.module.css",
+    "upstreamSha256": null
+  },
+  {
+    "target": "packages/client/ui-settings-general/tests/about-section.client.spec.tsx",
+    "source": "overrides/ui-settings-general/about-section.client.spec.tsx",
+    "upstreamSha256": null
   }
 ]
