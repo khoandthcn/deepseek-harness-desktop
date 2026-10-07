@@ -138,6 +138,7 @@ nằm ngoài profile nên được giữ nguyên.
 | Preset `standard-brave` trong bộ preset có sẵn | `packages/preset/agent-presets/presets/standard-brave/` |
 | Preset mặc định của bản desktop = `standard-brave` | `apps/desktop-host/config/desktop.cordis.patch.yml` |
 | Preset `soc-cloud` với các tool SOAR, EDR, SIEM và NSM (đọc; riêng SOAR có comment, đóng case, tạo ticket, mỗi lần đều chờ người dùng duyệt); không nhúng địa chỉ hệ thống | `packages/preset/agent-presets/presets/soc-cloud/` |
+| Bộ công cụ văn phòng `tool-office` trong mọi preset Standard: đọc Word/Excel/PowerPoint/PDF/CSV, tạo Word/Excel/PowerPoint, ghép/tách/trích trang PDF, chuyển CSV↔Excel và Markdown→Word; không cần Office, Python hay mạng | `packages/soc/tool-office/` |
 | Đóng dấu version theo từng build lên cả họ `dsh` (`0.1.5-rc.1` → `0.1.5-rc.1.soc.<dấu>`) để mỗi bản cài tự cài lại profile `~/.dsh/profiles/desktop`; `DSH_SOC_BUILD_STAMP` đặt dấu cố định (CI dùng số run), mặc định là thời điểm build | mọi `package.json` mang version của họ `dsh` (không đụng `vendor/`) |
 
 File bị thay thế phải khớp mã SHA-256 ghi trong [`overrides/manifest.json`](overrides/manifest.json),

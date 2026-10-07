@@ -1,0 +1,46 @@
+{
+  "name": "@deepseek-ai/dsh-tool-office",
+  "version": "0.0.0",
+  "description": "Office document tools: read Word, Excel, PowerPoint, PDF and CSV; create Word, Excel and PowerPoint; merge, split and extract PDF pages; convert CSV and Markdown. Pure JavaScript, no Office, Python or network needed.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "docx": "9.8.1",
+    "exceljs": "4.4.0",
+    "jszip": "3.10.2",
+    "mammoth": "1.13.0",
+    "pdf-lib": "1.17.1",
+    "pptxgenjs": "4.0.1",
+    "unpdf": "1.8.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-fs": "workspace:^",
+    "@deepseek-ai/dsh-tools": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-fs": "workspace:^",
+    "@deepseek-ai/dsh-tools": "workspace:^",
+    "typescript": "^5",
+    "vitest": "^3"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT"
+}

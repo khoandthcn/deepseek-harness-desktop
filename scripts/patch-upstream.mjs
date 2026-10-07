@@ -135,6 +135,17 @@ patch(
   "      expect(b.slots.entries(name)).toHaveLength(name === 'settings.section' ? 2 : 1)\n",
 )
 
+// Office documents in every session of the standard family: the row is added
+// to upstream `standard`, which `standard-brave` and `soc-cloud` are generated from.
+patch(
+  'packages/preset/agent-presets/presets/standard/agent.cordis.yml',
+  "- id: present\n  name: '@deepseek-ai/dsh-tool-present'\n",
+  "- id: present\n  name: '@deepseek-ai/dsh-tool-present'\n\n"
+  + "# Office documents: read Word, Excel, PowerPoint, PDF and CSV; create Word,\n"
+  + "# Excel and PowerPoint; PDF page operations; conversions. Added by this build.\n"
+  + "- id: tool-office\n  name: '@deepseek-ai/dsh-tool-office'\n",
+)
+
 // Prebuilt native modules keep their own signatures; the bundled upstream
 // Node.js loads them as it does for any npm install.
 patch(
@@ -437,6 +448,13 @@ const SOC_PACKAGE_REFERENCES = {
     '../../../vendor/cordis',
     '../../skill/skill-filesystem',
   ],
+  // Office documents: read, create and convert, in every standard preset.
+  'tool-office': [
+    '../../../vendor/cosmokit',
+    '../../../vendor/cordis',
+    '../../core/tools',
+    '../../fs/fs',
+  ],
 }
 for (const name of [
   'soc-client',
@@ -447,6 +465,7 @@ for (const name of [
   'tool-soc-nsm',
   'tool-soc-ti',
   'soc-skills',
+  'tool-office',
 ]) {
   const from = join(here, 'overrides', 'soc', name)
   const to = join(root, 'packages', 'soc', name)
@@ -511,6 +530,7 @@ for (const name of [
   'dsh-tool-soc-nsm',
   'dsh-tool-soc-ti',
   'dsh-soc-skills',
+  'dsh-tool-office',
 ]) {
   cliManifest.dependencies[`@deepseek-ai/${name}`] = 'workspace:^'
 }
@@ -534,7 +554,8 @@ patch(
   + '      "@deepseek-ai/dsh-tool-soc-siem": ["./packages/soc/tool-soc-siem/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-nsm": ["./packages/soc/tool-soc-nsm/src"],\n'
   + '      "@deepseek-ai/dsh-tool-soc-ti": ["./packages/soc/tool-soc-ti/src"],\n'
-  + '      "@deepseek-ai/dsh-soc-skills": ["./packages/soc/soc-skills/src"],\n',
+  + '      "@deepseek-ai/dsh-soc-skills": ["./packages/soc/soc-skills/src"],\n'
+  + '      "@deepseek-ai/dsh-tool-office": ["./packages/soc/tool-office/src"],\n',
 )
 patch(
   'tsconfig.host.json',
@@ -547,7 +568,8 @@ patch(
   + '    { "path": "./packages/soc/tool-soc-siem" },\n'
   + '    { "path": "./packages/soc/tool-soc-nsm" },\n'
   + '    { "path": "./packages/soc/tool-soc-ti" },\n'
-  + '    { "path": "./packages/soc/soc-skills" },\n',
+  + '    { "path": "./packages/soc/soc-skills" },\n'
+  + '    { "path": "./packages/soc/tool-office" },\n',
 )
 
 writeSocPreset(root, join(root, 'packages/preset/agent-presets/presets', SOC_PRESET_ID))
