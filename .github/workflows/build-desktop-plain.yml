@@ -1,8 +1,10 @@
 # Build unsigned DeepSeek Harness Desktop installers from the official source, unmodified.
 #
-# Unlike build-desktop.yml this applies no patch: no SOC packages, presets or
-# onboarding changes. It runs upstream's own unsigned packaging commands, which
-# need no signing certificate (macOS gets an ad-hoc signature, Windows none).
+# Unlike build-desktop.yml this adds no SOC packages, presets or onboarding
+# changes. It applies one patch (scripts/patch-upstream-plain.mjs: move a dsh
+# 0.1.x profile aside on upgrade) and runs upstream's own unsigned packaging
+# commands, which need no signing certificate (macOS gets an ad-hoc signature,
+# Windows none).
 # Unsigned builds carry no auto-update feed: users install newer versions by hand.
 name: Build desktop (plain upstream)
 
@@ -50,6 +52,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
         with:
           repository: deepseek-ai/deepseek-harness
           ref: ${{ inputs.upstream_ref }}
@@ -63,6 +67,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+
+      - name: Patch upstream (upgrade from a dsh 0.1.x profile)
+        run: node scripts/patch-upstream-plain.mjs upstream
 
       - name: Read version
         id: version
