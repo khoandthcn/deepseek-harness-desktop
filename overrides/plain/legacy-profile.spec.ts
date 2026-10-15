@@ -20,7 +20,7 @@ const PATCH = [
   '  name: "@deepseek-ai/dsh-llm-pi-ai"',
   '  config:',
   '    providers:',
-  '      secagi:',
+  '      internal:',
   '        baseURL: https://models.example/routing',
   '- id: soc-auth',
   "  name: '@deepseek-ai/dsh-soc-auth'",
