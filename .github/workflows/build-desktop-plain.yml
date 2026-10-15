@@ -1,0 +1,126 @@
+# Build unsigned DeepSeek Harness Desktop installers from the official source, unmodified.
+#
+# Unlike build-desktop.yml this applies no patch: no SOC packages, presets or
+# onboarding changes. It runs upstream's own unsigned packaging commands, which
+# need no signing certificate (macOS gets an ad-hoc signature, Windows none).
+# Unsigned builds carry no auto-update feed: users install newer versions by hand.
+name: Build desktop (plain upstream)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: deepseek-ai/deepseek-harness tag or branch
+        required: true
+        default: dsh-v0.2.1-alpha.3
+      release:
+        description: Publish the installers as a GitHub Release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.upstream_ref }}
+  cancel-in-progress: false
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            script: mac:arm64:unsigned
+            runner: macos-15
+          - target: mac-x64
+            script: mac:x64:unsigned
+            runner: macos-15-intel
+          - target: win-x64
+            script: win:x64:unsigned
+            runner: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ inputs.upstream_ref }}
+          path: upstream
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: upstream/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./upstream/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Unsigned Windows packaging still embeds a mandatory-update policy and
+      # refuses to build without its origin. Nothing serves that policy for this
+      # build, so the origin is a harmless HTTPS host and the poll interval is
+      # the largest allowed; a failed poll never blocks the application.
+      - name: Windows packaging settings
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cat > upstream/apps/desktop/.env.windows <<'EOF'
+          DSH_DESKTOP_APP_ID=io.github.khoandthcn.deepseekharness
+          DSH_DESKTOP_AUTO_UPDATE_ENV=production
+          DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://github.com
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"intervalMs":2147483647,"maxBackoffMs":2147483647}'
+          EOF
+
+      - name: Install
+        working-directory: upstream
+        run: pnpm install --frozen-lockfile
+
+      - name: Package
+        working-directory: upstream
+        run: pnpm run package:desktop:${{ matrix.script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-harness-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/*.dmg
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/*.exe
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          ls -la dist
+          tag="v${VERSION}"
+          notes="Unsigned build of DeepSeek Harness Desktop ${VERSION} from deepseek-ai/deepseek-harness@${{ inputs.upstream_ref }}, without modifications (no SOC plugins). No automatic updates: download a newer installer by hand. See README for first-launch steps on macOS and Windows."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --title "DeepSeek Harness Desktop ${VERSION}" --notes "$notes"
+          fi
