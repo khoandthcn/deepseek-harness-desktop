@@ -1,9 +1,11 @@
 # Build unsigned DeepSeek Harness Desktop installers from the official source.
 #
 # Unlike build-desktop.yml this adds no SOC packages, presets or onboarding
-# changes. scripts/patch-upstream-plain.mjs only eases the upgrade from the SOC
-# builds (move a dsh 0.1.x profile aside; resume Sessions whose preset is gone
-# under the default), then upstream's own unsigned packaging commands run; they
+# changes. scripts/patch-upstream-plain.mjs eases the upgrade from the SOC builds
+# (move a dsh 0.1.x profile aside; resume Sessions whose preset is gone under
+# the default) and replaces the DeepSeek-only welcome window with a first-run
+# step that leads with custom providers; then upstream's own unsigned packaging
+# commands run; they
 # need no signing certificate (macOS gets an ad-hoc signature, Windows none).
 # Unsigned builds carry no auto-update feed: users install newer versions by hand.
 name: Build desktop (plain upstream)
@@ -14,7 +16,7 @@ on:
       upstream_ref:
         description: deepseek-ai/deepseek-harness tag or branch
         required: true
-        default: dsh-v0.2.1-alpha.3
+        default: dsh-v0.2.1-rc.2
       release:
         description: Publish the installers as a GitHub Release
         type: boolean
@@ -68,7 +70,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Patch upstream (upgrade from the SOC builds)
+      - name: Patch upstream (SOC-build upgrade, custom-provider onboarding)
         run: node scripts/patch-upstream-plain.mjs upstream
 
       - name: Read version
