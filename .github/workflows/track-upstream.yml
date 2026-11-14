@@ -1,0 +1,66 @@
+# Build every new deepseek-ai/deepseek-harness release, once a day.
+#
+# Finds the highest dsh-v* release upstream; when this repository has no
+# release v<version> yet, starts build-desktop-plain.yml for it, which publishes
+# the installers and points the update feed at them. A version whose build is
+# running or succeeded is left alone; one that failed is retried until it has
+# failed MAX_FAILURES times (usually a patch no longer applies: fix it, then
+# start the build by hand).
+name: Track upstream releases
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 08:00 Asia/Ho_Chi_Minh
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: track-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: deepseek-ai/deepseek-harness
+  BUILD_WORKFLOW: build-desktop-plain.yml
+  MAX_FAILURES: '2'
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Start a build for a new upstream release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          versions=$(gh api "repos/$UPSTREAM/releases?per_page=50" \
+            --jq '.[] | select(.draft | not) | .tag_name | select(startswith("dsh-v")) | ltrimstr("dsh-v")')
+          if [ -z "$versions" ]; then echo "No dsh-v releases upstream"; exit 0; fi
+          latest=$(npx -y semver@7.6.3 --include-prerelease $versions | tail -1)
+          ref="dsh-v$latest"
+          echo "Latest upstream release: $ref"
+
+          if gh release view "v$latest" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$latest is already released here"; exit 0
+          fi
+
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$BUILD_WORKFLOW" --limit 100 \
+            --json displayTitle,status,conclusion \
+            --jq "[.[] | select(.displayTitle == \"Build desktop $ref\")]")
+          active=$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")
+          succeeded=$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$runs")
+          failed=$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' <<<"$runs")
+          if [ "$active" -gt 0 ]; then echo "A build of $ref is already running"; exit 0; fi
+          if [ "$succeeded" -gt 0 ]; then echo "$ref built without a release (release input off?)"; exit 0; fi
+          if [ "$failed" -ge "$MAX_FAILURES" ]; then
+            echo "::warning::$ref failed $failed times; fix the build and start $BUILD_WORKFLOW by hand"; exit 0
+          fi
+
+          gh workflow run "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" -f upstream_ref="$ref" -f release=true
+          echo "Started $BUILD_WORKFLOW for $ref"

@@ -12,6 +12,8 @@
 # newer version itself; macOS (Squirrel.Mac refuses ad-hoc signed updates)
 # reports it and opens its release page.
 name: Build desktop (plain upstream)
+# track-upstream.yml finds this workflow's runs for a ref by this title.
+run-name: Build desktop ${{ inputs.upstream_ref }}
 
 on:
   workflow_dispatch:
@@ -154,6 +156,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
+          # A rebuild of an older upstream release must not take the feed back.
+          current=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/$FEED_TAG/nightly.yml" 2>/dev/null \
+            | sed -n 's/^version: "\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' || true)
+          if [ -n "$current" ] && [ "$(npx -y semver@7.6.3 --include-prerelease "$current" "$VERSION" | tail -1)" != "$VERSION" ]; then
+            echo "Feed stays on $current, newer than $VERSION"; exit 0
+          fi
           node scripts/make-update-feed.mjs dist "$GITHUB_REPOSITORY" "$VERSION" feed
           if ! gh release view "$FEED_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$FEED_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
