@@ -3,11 +3,14 @@
 # Unlike build-desktop.yml this adds no SOC packages, presets or onboarding
 # changes. scripts/patch-upstream-plain.mjs eases the upgrade from the SOC builds
 # (move a dsh 0.1.x profile aside; resume Sessions whose preset is gone under
-# the default) and replaces the DeepSeek-only welcome window with a first-run
-# step that leads with custom providers; then upstream's own unsigned packaging
-# commands run; they
+# the default), replaces the DeepSeek-only welcome window with a first-run
+# step that leads with custom providers, and keeps an update feed in unsigned
+# builds; then upstream's own unsigned packaging commands run; they
 # need no signing certificate (macOS gets an ad-hoc signature, Windows none).
-# Unsigned builds carry no auto-update feed: users install newer versions by hand.
+# Updates come from this repository's Releases: the release job refreshes the
+# feed in the fixed `desktop-updates` release. Windows downloads and installs a
+# newer version itself; macOS (Squirrel.Mac refuses ad-hoc signed updates)
+# reports it and opens its release page.
 name: Build desktop (plain upstream)
 
 on:
@@ -18,7 +21,7 @@ on:
         required: true
         default: dsh-v0.2.2-rc.3
       release:
-        description: Publish the installers as a GitHub Release
+        description: Publish the installers as a GitHub Release and point the update feed at them
         type: boolean
         default: true
 
@@ -31,6 +34,7 @@ concurrency:
 
 env:
   DSH_TELEMETRY_DISABLED: '1'
+  FEED_TAG: desktop-updates
 
 jobs:
   build:
@@ -70,7 +74,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Patch upstream (SOC-build upgrade, custom-provider onboarding)
+      - name: Patch upstream (SOC-build upgrade, custom-provider onboarding, GitHub updates)
         run: node scripts/patch-upstream-plain.mjs upstream
 
       - name: Read version
@@ -99,6 +103,9 @@ jobs:
 
       - name: Package
         working-directory: upstream
+        env:
+          DSH_DESKTOP_UPDATE_FEED_URL: https://github.com/${{ github.repository }}/releases/download/${{ env.FEED_TAG }}
+          DSH_DESKTOP_RELEASES_URL: https://github.com/${{ github.repository }}/releases
         run: pnpm run package:desktop:${{ matrix.script }}
 
       - uses: actions/upload-artifact@v4
@@ -108,6 +115,7 @@ jobs:
           path: |
             upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/*.dmg
             upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/*.exe
+            upstream/apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/*.blockmap
 
   release:
     name: GitHub Release
@@ -115,10 +123,16 @@ jobs:
     if: ${{ inputs.release }}
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
 
       - name: Publish
         env:
@@ -127,9 +141,23 @@ jobs:
         run: |
           ls -la dist
           tag="v${VERSION}"
-          notes="Unsigned build of DeepSeek Harness Desktop ${VERSION} from deepseek-ai/deepseek-harness@${{ inputs.upstream_ref }}, without modifications (no SOC plugins). No automatic updates: download a newer installer by hand. See README for first-launch steps on macOS and Windows."
+          notes="Unsigned build of DeepSeek Harness Desktop ${VERSION} from deepseek-ai/deepseek-harness@${{ inputs.upstream_ref }}, without SOC plugins. Windows updates itself from this repository's Releases (Check for Updates…); macOS reports a newer version and opens its release page. See README for first-launch steps on macOS and Windows."
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --title "DeepSeek Harness Desktop ${VERSION}" --notes "$notes"
           fi
+
+      # After the versioned release: the feed names its installers by URL.
+      - name: Point the update feed at this release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          node scripts/make-update-feed.mjs dist "$GITHUB_REPOSITORY" "$VERSION" feed
+          if ! gh release view "$FEED_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$FEED_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Desktop update feed" \
+              --notes "Update feed read by DeepSeek Harness Desktop builds from this repository. Installers are in the versioned releases."
+          fi
+          gh release upload "$FEED_TAG" feed/* --clobber --repo "$GITHUB_REPOSITORY"

@@ -38,15 +38,17 @@ Vào mục **Releases** của repo này và tải file đúng với máy của b
      xattr -dr com.apple.quarantine "/Applications/DeepSeek Harness.app"
      ```
 
-3. Bản macOS **không tự cập nhật** (Squirrel.Mac không chấp nhận bản ký ad-hoc) —
-   khi có phiên bản mới, tải `.dmg` mới và cài đè.
+3. Bản macOS **không tự cài bản cập nhật** (Squirrel.Mac không chấp nhận bản ký ad-hoc), nhưng
+   (từ bản build có kênh cập nhật GitHub) vẫn tự kiểm tra GitHub Releases của repo này và báo khi có
+   phiên bản mới (menu **Check for Updates…**); bấm tải sẽ mở trang release để tải `.dmg` mới và cài đè.
 
 ### Cài trên Windows
 
 1. Chạy `deepseek-harness-<version>-win-x64.exe`.
 2. SmartScreen có thể hiện *“Windows protected your PC”* → bấm **More info → Run anyway**.
 3. Chọn thư mục cài đặt và hoàn tất. Ứng dụng tự kiểm tra bản mới từ GitHub Releases
-   của repo này (menu **Check for Updates…**).
+   của repo này (menu **Check for Updates…**), tải về và cài sau khi bạn xác nhận
+   (release `desktop-updates` chứa feed cập nhật, đừng xoá).
    **Windows trên ARM** (Surface Pro X/Copilot+ PC, máy ảo Windows 11 ARM trên Mac Apple Silicon):
    dùng `deepseek-harness-<version>-win-arm64.zip` thay cho file `.exe` — giải nén vào một thư mục
    (ví dụ `%LOCALAPPDATA%\Programs\DeepSeek Harness`) rồi chạy `DeepSeek Harness.exe`. Bản x64 vẫn chạy

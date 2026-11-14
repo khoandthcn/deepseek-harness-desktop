@@ -18,6 +18,13 @@
 //    until one of them exists. The workspace opens directly instead, and its
 //    first-run model step (enabled on Desktop too) leads with creating a custom
 //    provider, keeping DeepSeek sign-in or key as the alternative.
+// 4. Updates from this repository's GitHub Releases. Upstream drops the update
+//    feed from unsigned builds. With DSH_DESKTOP_UPDATE_FEED_URL set at
+//    packaging time they keep one (a generic feed, nightly channel): Windows
+//    downloads and installs through upstream's own flow (electron-updater skips
+//    the signature check when the feed names no publisher). Squirrel.Mac
+//    refuses ad-hoc signed updates, so on macOS a found update opens its
+//    release page (DSH_DESKTOP_RELEASES_URL) instead of downloading.
 import { createHash } from 'node:crypto'
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -303,4 +310,35 @@ patch(
   'apps/desktop/tests/welcome-startup.spec.ts',
   "it.each([false, true])('starts welcome onboarding without carrying update focus into login or skip (Windows update=%s)'",
   "// deepseek-harness-desktop: startup never opens the welcome window (needsWelcome is always false).\nit.skip.each([false, true])('starts welcome onboarding without carrying update focus into login or skip (Windows update=%s)'",
+)
+
+// 4. Updates from GitHub Releases: the feed for unsigned builds...
+patch(
+  'apps/desktop/scripts/electron-builder-config.mjs',
+  '  const update = unsigned ? undefined : resolveDesktopAutoUpdateConfig(env, resolvedPlatform, resolvedArch)\n',
+  '  // deepseek-harness-desktop: unsigned builds read updates from the feed GitHub Releases serve.\n'
+  + '  const update = unsigned\n'
+  + "    ? (env.DSH_DESKTOP_UPDATE_FEED_URL ? { publicUrl: env.DSH_DESKTOP_UPDATE_FEED_URL, channel: 'nightly' } : undefined)\n"
+  + '    : resolveDesktopAutoUpdateConfig(env, resolvedPlatform, resolvedArch)\n',
+)
+// ...the release page a macOS build opens...
+patch(
+  'apps/desktop/scripts/electron-builder-config.mjs',
+  "      dshDesktopUpdateChannel: update?.channel ?? 'nightly',\n",
+  "      dshDesktopUpdateChannel: update?.channel ?? 'nightly',\n"
+  + "      ...(unsigned && packagesMacOS && env.DSH_DESKTOP_RELEASES_URL ? { dshDesktopReleasesUrl: env.DSH_DESKTOP_RELEASES_URL } : {}),\n",
+)
+// ...and opening it where Squirrel.Mac would refuse the download.
+patch(
+  'apps/desktop/src/main.ts',
+  '  const downloadUpdate = async (version: string, revision = updates.revision): Promise<DesktopUpdateState> => {\n',
+  '  // deepseek-harness-desktop: Squirrel.Mac refuses ad-hoc signed updates; the user installs the release by hand.\n'
+  + "  const releasesUrl = typeof manifest === 'object' && manifest !== null && 'dshDesktopReleasesUrl' in manifest\n"
+  + "    && typeof manifest.dshDesktopReleasesUrl === 'string' && manifest.dshDesktopReleasesUrl.startsWith('https://')\n"
+  + '    ? manifest.dshDesktopReleasesUrl : undefined\n'
+  + '  const downloadUpdate = async (version: string, revision = updates.revision): Promise<DesktopUpdateState> => {\n'
+  + "    if (process.platform === 'darwin' && releasesUrl !== undefined) {\n"
+  + '      await shell.openExternal(`${releasesUrl}/tag/v${encodeURIComponent(version)}`)\n'
+  + '      return updates.state\n'
+  + '    }\n',
 )
