@@ -16,7 +16,7 @@ on:
       upstream_ref:
         description: deepseek-ai/deepseek-harness tag or branch
         required: true
-        default: dsh-v0.2.1-rc.2
+        default: dsh-v0.2.2-rc.3
       release:
         description: Publish the installers as a GitHub Release
         type: boolean
