@@ -150,6 +150,16 @@ jobs:
             gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --title "DeepSeek Harness Desktop ${VERSION}" --notes "$notes"
           fi
 
+      # Needs the published assets (sizes, digests) and the release's tag (commit log).
+      - name: Write detailed release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+        run: |
+          node scripts/release-notes.mjs "$GITHUB_REPOSITORY" "$VERSION" "$UPSTREAM_REF" > release-notes.md
+          gh release edit "v${VERSION}" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+
       # After the versioned release: the feed names its installers by URL.
       - name: Point the update feed at this release
         env:

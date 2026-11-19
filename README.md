@@ -102,6 +102,9 @@ persona suffix của system prompt, và `tool-web` đặt `search: false`.
 - `upstream_ref`: tag hoặc branch của `deepseek-ai/deepseek-harness`
   (xem [danh sách tag](https://github.com/deepseek-ai/deepseek-harness/tags), ví dụ `dsh-v0.1.5-rc.1`).
 - `release`: tick để đăng bộ cài lên GitHub Releases với tag `v<version>`.
+  Ghi chú phát hành do [`scripts/release-notes.mjs`](scripts/release-notes.mjs) viết: ghi chú upstream
+  (phần tiếng Anh) của mọi bản từ sau release trước, các commit của repo này, bảng file tải kèm
+  SHA-256, hướng dẫn cài và cập nhật.
 
 Mỗi target chạy lệnh đóng gói chính thức `pnpm run package:desktop:<target>`, nên file cài
 kèm sẵn Node.js, pnpm và toàn bộ dsh (cài offline ở lần mở đầu).
